@@ -89,7 +89,8 @@ file loses only in-flight reaction updates.
 **Message flow, both directions:**
 
 - Inbound: `POST /sms/inbound` → signature check (`_check`) → dedup (`already_seen`) →
-  enqueue → `deliver_inbound` → passcode check → `get_or_create_channel` → post.
+  enqueue → `deliver_inbound` → fetch media → passcode check → `get_or_create_channel`
+  → post.
 - Outbound: `on_message` → skip bots/notes/other guilds → resolve target from either
   the `!sms <number>` command or the channel topic → `handle_outbound` →
   `strip_discord_markup` → `chunk` → `send_sms` per piece → record SIDs.
@@ -121,6 +122,12 @@ path string passed to `_check` must stay in sync with the route.
 - **Passcode redaction** (`looks_like_a_code`: a code-ish keyword *and* a 4–8 digit
   number) diverts to `DISCORD_SECURE_CHANNEL_ID` if set, otherwise writes nothing to
   Discord at all. The no-secure-channel branch must not leak the body.
+- **MMS captions arrive as a `text/plain` media part**, not in `Body` — carriers split
+  them out, so an image sent with a caption webhooks in as `Body=""` plus two
+  `MediaUrl`s. `deliver_inbound` folds those parts back into the body instead of
+  attaching them (otherwise the caption uploads as a stray `mms.bin`). This is why
+  media is fetched *before* the passcode check: a code sent as a caption would
+  otherwise skip redaction entirely. Keep that ordering.
 - `on_ready` fires again after every gateway reconnect — the `_tasks_started` guard
   keeps background tasks from being spawned repeatedly. Any new background task belongs
   inside that guard.

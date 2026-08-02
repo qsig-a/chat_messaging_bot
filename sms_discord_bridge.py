@@ -337,7 +337,7 @@ async def get_or_create_channel(number: str) -> discord.TextChannel:
     return channel
 
 
-async def fetch_media(url: str) -> Optional[tuple[bytes, str]]:
+async def fetch_media(url: str) -> Optional[tuple[bytes, str, str]]:
     try:
         r = await http.get(url, auth=(SW_PROJECT, SW_TOKEN), follow_redirects=True)
         r.raise_for_status()
@@ -351,14 +351,36 @@ async def fetch_media(url: str) -> Optional[tuple[bytes, str]]:
         "image/jpeg": "jpg", "image/png": "png", "image/gif": "gif",
         "image/webp": "webp", "video/mp4": "mp4", "audio/mpeg": "mp3",
         "audio/amr": "amr", "application/pdf": "pdf", "text/vcard": "vcf",
+        "text/plain": "txt",
     }.get(ctype, "bin")
-    return r.content, f"mms.{ext}"
+    return r.content, f"mms.{ext}", ctype
 
 
 async def deliver_inbound(payload: dict) -> None:
     number = payload["from"]
     body = payload["body"]
     media = payload["media"]
+
+    # Resolve media first: carriers routinely deliver an MMS caption as its own
+    # text/plain part instead of in Body, and that text has to be folded back in
+    # *before* the passcode check below — otherwise a code sent as a caption skips
+    # redaction and lands in the normal channel.
+    files, captions = [], []
+    for url in media:
+        got = await fetch_media(url)
+        if not got:
+            body = (body + f"\n_(attachment too large or unfetchable: {url})_").strip()
+            continue
+        data, filename, ctype = got
+        if ctype == "text/plain":
+            text = data.decode("utf-8", "replace").strip()
+            if text:
+                captions.append(text)
+            continue
+        files.append(discord.File(io.BytesIO(data), filename=filename))
+
+    if captions:
+        body = "\n".join([body, *captions]).strip()
 
     if REDACT_CODES and looks_like_a_code(body):
         secure = client.get_channel(SECURE_CHANNEL_ID) if SECURE_CHANNEL_ID else None
@@ -375,15 +397,6 @@ async def deliver_inbound(payload: dict) -> None:
         return
 
     channel = await get_or_create_channel(number)
-
-    files = []
-    for url in media:
-        got = await fetch_media(url)
-        if got:
-            data, filename = got
-            files.append(discord.File(io.BytesIO(data), filename=filename))
-        else:
-            body = (body + f"\n_(attachment too large or unfetchable: {url})_").strip()
 
     content = body or "_(no text body)_"
     for piece in [content[i:i + 1900] for i in range(0, len(content), 1900)]:
