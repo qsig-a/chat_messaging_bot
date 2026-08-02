@@ -97,7 +97,13 @@ file loses only in-flight reaction updates.
 
 **Webhook signature validation** (`valid_signature`) is the Twilio scheme SignalWire's
 LaML API uses: HMAC-SHA1 over `PUBLIC_BASE_URL + path` plus sorted form params, keyed
-by `SIGNALWIRE_API_TOKEN`. It is the *only* authentication on the webhook endpoints.
+by `SIGNALWIRE_SIGNING_KEY` (which falls back to `SIGNALWIRE_API_TOKEN`). It is the *only*
+authentication on the webhook endpoints. The signing key is not necessarily the same
+credential as the REST API token — a project can hold several tokens, any of which
+authenticates REST calls, while only one signs webhooks. That asymmetry looks like
+"sending works, receiving 403s". `explain_bad_signature` exists to tell those cases
+apart: on every rejection it re-runs the HMAC against each plausible URL variant and
+the other credential, and logs which one would have matched.
 `PUBLIC_BASE_URL` must match what SignalWire calls character for character — scheme,
 host, trailing slash — or every request 403s. If you change endpoint paths, the literal
 path string passed to `_check` must stay in sync with the route.
@@ -132,6 +138,7 @@ All config is environment variables read at import time via `_env()`; missing re
 vars call `sys.exit`. Required: `DISCORD_TOKEN`, `DISCORD_GUILD_ID`,
 `DISCORD_INBOX_CHANNEL_ID`, `SIGNALWIRE_SPACE_URL`, `SIGNALWIRE_PROJECT_ID`,
 `SIGNALWIRE_API_TOKEN`, `SIGNALWIRE_NUMBER`, `PUBLIC_BASE_URL`. Optional:
+`SIGNALWIRE_SIGNING_KEY`,
 `DISCORD_CATEGORY_ID`, `DISCORD_SECURE_CHANNEL_ID`, `REDACT_CODES`, `VERIFY_SIGNATURE`,
 `BIND_HOST`, `BIND_PORT`, `DB_PATH`, `HEARTBEAT_URL`, `COMMAND_PREFIX`, `NOTE_PREFIX`.
 The Discord bot needs the **Message Content** privileged intent.

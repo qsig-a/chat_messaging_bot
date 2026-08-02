@@ -54,6 +54,11 @@ REDACT_CODES = _env("REDACT_CODES", "true").lower() in ("1", "true", "yes")
 SW_SPACE = _env("SIGNALWIRE_SPACE_URL", required=True).replace("https://", "").strip("/")
 SW_PROJECT = _env("SIGNALWIRE_PROJECT_ID", required=True)
 SW_TOKEN = _env("SIGNALWIRE_API_TOKEN", required=True)
+# Webhook signatures are keyed by the project's signing key, which is not always the
+# same credential as the API token used for REST auth — a project can hold several
+# tokens, and only one of them signs. Falls back to the API token, which is correct
+# for projects where they are the same value.
+SW_SIGNING_KEY = _env("SIGNALWIRE_SIGNING_KEY", "").strip() or SW_TOKEN
 SW_NUMBER = _env("SIGNALWIRE_NUMBER", required=True)  # E.164, e.g. +14165550123
 
 PUBLIC_BASE_URL = _env("PUBLIC_BASE_URL", required=True).rstrip("/")
@@ -222,11 +227,71 @@ def chunk(body: str, size: int = MAX_SMS_CHARS) -> list[str]:
     return out
 
 
-def valid_signature(url: str, params: dict[str, str], signature: str) -> bool:
+def valid_signature(
+    url: str, params: dict[str, str], signature: str, token: str = ""
+) -> bool:
     """Twilio-compatible request signature, as used by SignalWire's LaML API."""
     payload = url + "".join(f"{k}{params[k]}" for k in sorted(params))
-    digest = hmac.new(SW_TOKEN.encode(), payload.encode("utf-8"), hashlib.sha1).digest()
+    key = (token or SW_SIGNING_KEY).encode()
+    digest = hmac.new(key, payload.encode("utf-8"), hashlib.sha1).digest()
     return hmac.compare_digest(base64.b64encode(digest).decode(), signature or "")
+
+
+def explain_bad_signature(
+    request: Request, path: str, params: dict[str, str], signature: str
+) -> str:
+    """Say *why* a signature failed, so a rejection points at the misconfiguration.
+
+    SignalWire signs the webhook URL exactly as configured in its dashboard, so a
+    mismatch is nearly always config drift rather than a forged request. Retrying
+    the HMAC against each plausible variant identifies which knob is wrong: if a
+    variant matches, the token is fine and the URL is wrong; if none matches, the
+    URL is a dead end and the token is the suspect.
+
+    Only parameter *names* are ever logged — values carry message bodies and
+    passcodes.
+    """
+    if not signature:
+        ctype = request.headers.get("content-type", "none")
+        # SignalWire sends X-Twilio-Signature for LaML webhooks, but other handler
+        # types sign under their own header — name whichever ones actually arrived.
+        seen = sorted(h for h in request.headers if "signature" in h.lower())
+        return (
+            f"no X-Twilio-Signature header (content-type={ctype!r}, "
+            f"signature-ish headers present: {seen or 'none'}); the number is probably "
+            "routed to a non-LaML handler, which signs differently"
+        )
+
+    base = f"{PUBLIC_BASE_URL}{path}"
+    host = request.headers.get("host", "")
+    observed = f"https://{host}{request.url.path}"
+    if request.url.query:
+        observed += f"?{request.url.query}"
+
+    candidates = [
+        (f"{base}/", "the configured webhook URL has a trailing slash"),
+        (observed, "the webhook URL is the host/query the request arrived with"),
+        (observed.replace("https://", "http://", 1), "the webhook is configured as http://"),
+        (base.replace("https://", "http://", 1), "the webhook is configured as http://"),
+    ]
+    for url, hint in candidates:
+        if url != base and valid_signature(url, params, signature):
+            return f"signature matches {url!r} instead — {hint}"
+
+    # The two differ only when SIGNALWIRE_SIGNING_KEY is set explicitly; if the API
+    # token is what actually signs, say so rather than blaming the URL.
+    if SW_TOKEN != SW_SIGNING_KEY and valid_signature(base, params, signature, SW_TOKEN):
+        return (
+            "signature matches SIGNALWIRE_API_TOKEN, not SIGNALWIRE_SIGNING_KEY — "
+            "clear SIGNALWIRE_SIGNING_KEY, the API token signs for this project"
+        )
+
+    return (
+        f"no URL variant or known credential matched (signed url={base!r}, host={host!r}, "
+        f"query={request.url.query!r}, params={sorted(params)}); the signing key is wrong "
+        "— copy the signing key from the SignalWire dashboard for this project into "
+        "SIGNALWIRE_SIGNING_KEY (a project can hold several tokens, and only one signs)"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -490,7 +555,11 @@ async def _check(request: Request, path: str) -> Optional[dict[str, str]]:
     if VERIFY_SIGNATURE:
         signature = request.headers.get("X-Twilio-Signature", "")
         if not valid_signature(f"{PUBLIC_BASE_URL}{path}", params, signature):
-            log.warning("rejected request with bad signature on %s", path)
+            log.warning(
+                "rejected request with bad signature on %s: %s",
+                path,
+                explain_bad_signature(request, path, params, signature),
+            )
             return None
     return params
 

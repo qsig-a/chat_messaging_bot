@@ -93,9 +93,10 @@ required values cause an immediate exit naming the variable.
 | `DISCORD_INBOX_CHANNEL_ID` | yes | — | Gets new-contact notices and delivery failures |
 | `SIGNALWIRE_SPACE_URL` | yes | — | e.g. `example.signalwire.com` |
 | `SIGNALWIRE_PROJECT_ID` | yes | — | |
-| `SIGNALWIRE_API_TOKEN` | yes | — | Also the webhook signing key |
+| `SIGNALWIRE_API_TOKEN` | yes | — | REST auth for sending |
 | `SIGNALWIRE_NUMBER` | yes | — | E.164, e.g. `+14165550123` |
 | `PUBLIC_BASE_URL` | yes | — | Public HTTPS base, no trailing slash |
+| `SIGNALWIRE_SIGNING_KEY` | no | API token | Key SignalWire signs inbound webhooks with. Set it when the project's signing key differs from the API token — otherwise sending works but every inbound request is rejected with a bad signature |
 | `DISCORD_CATEGORY_ID` | no | none | Category to create contact channels under |
 | `DISCORD_SECURE_CHANNEL_ID` | no | none | Where passcodes go, if anywhere |
 | `REDACT_CODES` | no | `true` | See [Passcode handling](#passcode-handling) |
