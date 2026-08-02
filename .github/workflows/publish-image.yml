@@ -1,0 +1,118 @@
+name: Publish image
+
+# Builds the container and pushes it to GHCR, tagged with the release version.
+# The image name comes from ${{ github.repository }}, so forks publish to their
+# own namespace without editing anything here.
+#
+# Three entry points:
+#   - release: published  — a release created by hand in the GitHub UI
+#   - workflow_call       — release.yml, which cannot rely on the event above
+#                           because releases made with GITHUB_TOKEN don't
+#                           trigger workflows
+#   - workflow_dispatch   — rebuild an existing tag without cutting a release
+
+on:
+  release:
+    types: [published]
+  workflow_call:
+    inputs:
+      version:
+        description: Tag to build and publish, e.g. v1.2.0
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing tag to rebuild and publish, e.g. v1.2.0
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-image-${{ inputs.version || github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      # Add linux/arm64 for ARM hosts (Raspberry Pi, Apple Silicon, ARM NAS).
+      # That also needs docker/setup-qemu-action restored below, and roughly
+      # doubles build time because the ARM leg runs under emulation.
+      PLATFORMS: linux/amd64
+    steps:
+      - name: Resolve the version being built
+        id: v
+        shell: bash
+        env:
+          CALLED_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          set -euo pipefail
+          version="${CALLED_VERSION:-$RELEASE_TAG}"
+          if [ -z "$version" ]; then
+            echo "::error::Could not determine which version to build."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # A prerelease should not move the `latest` tag.
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            echo "latest=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "latest=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.v.outputs.version }}    # build exactly the tagged commit
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags and labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ steps.v.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.v.outputs.version }}
+            type=raw,value=latest,enable=${{ steps.v.outputs.latest }}
+          labels: |
+            org.opencontainers.image.title=SignalWire-Discord SMS bridge
+            org.opencontainers.image.description=Send and receive SMS/MMS from Discord via a SignalWire number
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.v.outputs.version }}
+
+      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summarise what was pushed
+        shell: bash
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          {
+            echo '### Pushed to GHCR'
+            echo
+            echo '```'
+            echo "$TAGS"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,48 @@
+# The bridge and a Cloudflare Tunnel on a private network, with no published
+# ports — the webhook is reachable only through the tunnel, never from the LAN.
+#
+#   cp .env.example .env && chmod 600 .env
+#   docker compose up -d --build
+#   docker compose logs -f
+
+services:
+  bridge:
+    build: .
+    # To run a published release instead of building locally, comment out
+    # `build` above and use:
+    #   image: ghcr.io/<owner>/<repo>:latest
+    image: sms-discord-bridge:local
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - bridge-data:/data
+    networks:
+      - smsnet
+    # Deliberately no `ports:`. The image binds 0.0.0.0 because container
+    # loopback would be unreachable from cloudflared — publishing a port would
+    # put an unauthenticated endpoint on your LAN, guarded only by the
+    # webhook signature check.
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      # Read from .env by Compose. Passed explicitly rather than via env_file
+      # so the tunnel container doesn't receive the Discord and SignalWire
+      # credentials as well.
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
+    depends_on:
+      - bridge
+    networks:
+      - smsnet
+    # In Cloudflare Zero Trust, point the tunnel's public hostname
+    # (e.g. sms.example.com) at  http://bridge:8080
+
+networks:
+  smsnet:
+    driver: bridge
+
+volumes:
+  bridge-data:

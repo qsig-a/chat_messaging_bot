@@ -1,0 +1,146 @@
+name: Release
+
+# Manually cut a release. Reads the newest vX.Y.Z tag, bumps the part you pick,
+# writes release notes from the commits since that tag, then hands the new
+# version to publish-image.yml to build and push the container.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version to increment
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.next }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0        # tags and full history are needed below
+
+      - name: Work out the next version
+        id: version
+        shell: bash
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          prev=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+
+          if [ -z "$prev" ]; then
+            next="v0.1.0"
+            echo "No existing tags — starting at $next."
+          else
+            IFS=. read -r major minor patch <<< "${prev#v}"
+            case "$BUMP" in
+              major) major=$((major + 1)); minor=0; patch=0 ;;
+              minor) minor=$((minor + 1)); patch=0 ;;
+              patch) patch=$((patch + 1)) ;;
+              *) echo "::error::Unknown bump type: $BUMP"; exit 1 ;;
+            esac
+            next="v${major}.${minor}.${patch}"
+            echo "$prev + $BUMP -> $next"
+          fi
+
+          if git rev-parse -q --verify "refs/tags/$next" >/dev/null; then
+            echo "::error::Tag $next already exists."
+            exit 1
+          fi
+
+          echo "prev=$prev" >> "$GITHUB_OUTPUT"
+          echo "next=$next" >> "$GITHUB_OUTPUT"
+
+      - name: Build release notes from the commits since the last release
+        shell: bash
+        env:
+          PREV: ${{ steps.version.outputs.prev }}
+          NEXT: ${{ steps.version.outputs.next }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PREV" ]; then range="${PREV}..HEAD"; else range="HEAD"; fi
+          git log --no-merges --pretty=tformat:'%s (%h)' "$range" > commits.txt
+
+          if [ ! -s commits.txt ]; then
+            echo "::error::No commits since ${PREV:-the start of history} — nothing to release."
+            exit 1
+          fi
+
+          : > notes.md
+
+          # Pull commits matching a conventional-commit type into their own
+          # section, strip the "feat:"/"fix(scope):" prefix, and remove them
+          # from the pool so each commit is listed exactly once.
+          section() {
+            title="$1"
+            pattern="$2"
+            matched=$(grep -E "$pattern" commits.txt || true)
+            if [ -z "$matched" ]; then
+              return 0
+            fi
+            printf '### %s\n\n' "$title" >> notes.md
+            printf '%s\n' "$matched" \
+              | sed -E 's/^[a-z]+(\([^)]*\))?!?: *//' \
+              | sed 's/^/- /' >> notes.md
+            printf '\n' >> notes.md
+            grep -vE "$pattern" commits.txt > remaining.txt || true
+            mv remaining.txt commits.txt
+          }
+
+          section 'Features'      '^feat(\(|!|:)'
+          section 'Fixes'         '^fix(\(|!|:)'
+          section 'Documentation' '^docs(\(|!|:)'
+          section 'Maintenance'   '^(chore|build|ci|refactor|perf|style|test)(\(|!|:)'
+
+          # Anything that didn't follow the convention still gets listed.
+          if [ -s commits.txt ]; then
+            printf '### Other\n\n' >> notes.md
+            sed 's/^/- /' commits.txt >> notes.md
+            printf '\n' >> notes.md
+          fi
+
+          if [ -n "$PREV" ]; then
+            printf '**Full changelog**: %s/compare/%s...%s\n' "$REPO_URL" "$PREV" "$NEXT" >> notes.md
+          fi
+
+          cat notes.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Tag and publish the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          set -euo pipefail
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$NEXT" -m "$NEXT"
+          git push origin "$NEXT"
+          gh release create "$NEXT" --title "$NEXT" --notes-file notes.md
+
+  # Called directly rather than relying on the `release: published` event:
+  # releases created with GITHUB_TOKEN do not trigger further workflow runs.
+  publish:
+    needs: release
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish-image.yml
+    with:
+      version: ${{ needs.release.outputs.version }}

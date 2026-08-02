@@ -1,0 +1,4 @@
+# LF in the repository regardless of contributor platform. Without this, a
+# Windows checkout can commit CRLF into the systemd unit and the workflow
+# shell scripts, both of which break on it.
+* text=auto eol=lf

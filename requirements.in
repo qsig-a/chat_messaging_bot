@@ -1,0 +1,17 @@
+# Direct dependencies. Edit this file, then regenerate the locked requirements.txt:
+#
+#   docker run --rm -v "$PWD":/w -w /w python:3.12-slim sh -c \
+#     "pip install -q pip-tools && pip-compile --generate-hashes --strip-extras -o requirements.txt requirements.in"
+#
+# Never edit requirements.txt by hand.
+
+discord.py==2.7.1
+fastapi==0.141.1
+uvicorn==0.52.1
+httpx==0.28.1
+
+# Parses webhook form bodies. Keep at >=0.0.30: earlier releases carry DoS and
+# parameter-smuggling advisories (GHSA-59g5-xgcq-4qw3, GHSA-mj87-hwqh-73pj,
+# GHSA-pp6c-gr5w-3c5g, GHSA-5rvq-cxj2-64vf), and this parser runs on every
+# unauthenticated request before the signature check.
+python-multipart==0.0.32

@@ -1,0 +1,46 @@
+[Unit]
+Description=SignalWire <-> Discord SMS bridge
+After=network-online.target
+Wants=network-online.target
+
+# The bridge exits non-zero on a missing env var. Without a start limit, a typo
+# in .env becomes a silent restart loop instead of a failed unit you can see.
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=sms
+Group=sms
+WorkingDirectory=/opt/sms-bridge
+EnvironmentFile=/opt/sms-bridge/.env
+ExecStart=/opt/sms-bridge/.venv/bin/python /opt/sms-bridge/sms_discord_bridge.py
+Restart=on-failure
+RestartSec=5s
+
+# Without this, Python block-buffers stdout when it isn't a tty and log lines
+# reach journalctl in delayed bursts.
+Environment=PYTHONUNBUFFERED=1
+
+# --- Hardening -------------------------------------------------------------
+# Everything read-only except the working directory, which holds the SQLite
+# file. Set DB_PATH=/opt/sms-bridge/bridge.sqlite3 in .env to match.
+ProtectSystem=strict
+ReadWritePaths=/opt/sms-bridge
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+# AF_UNIX is required: asyncio uses a socketpair internally for loop wakeups.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
