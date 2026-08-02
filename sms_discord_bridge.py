@@ -356,6 +356,32 @@ async def fetch_media(url: str) -> Optional[tuple[bytes, str, str]]:
     return r.content, f"mms.{ext}", ctype
 
 
+def access_hint(channel_id: int, label: str) -> str:
+    """Actionable text for a channel the bot cannot use.
+
+    Discord reports both "channel deleted", "bot was never given access" and "a
+    channel-level override denies it" as the same 50001 Missing Access, so name the
+    places worth checking rather than repeating the API's wording.
+    """
+    return (
+        f"cannot post in the {label} channel ({channel_id}) — check that the channel "
+        "still exists, that the bot's role has View Channel + Send Messages on it, and "
+        "that no channel-level permission override denies either"
+    )
+
+
+async def notify_inbox(message: str) -> None:
+    """Best-effort operator notice. Never raises: callers use it on error paths."""
+    inbox = client.get_channel(INBOX_CHANNEL_ID)
+    if inbox is None:
+        log.error("%s (wanted to report: %s)", access_hint(INBOX_CHANNEL_ID, "inbox"), message)
+        return
+    try:
+        await inbox.send(message)
+    except discord.Forbidden:
+        log.error("%s (wanted to report: %s)", access_hint(INBOX_CHANNEL_ID, "inbox"), message)
+
+
 async def deliver_inbound(payload: dict) -> None:
     number = payload["from"]
     body = payload["body"]
@@ -384,16 +410,34 @@ async def deliver_inbound(payload: dict) -> None:
 
     if REDACT_CODES and looks_like_a_code(body):
         secure = client.get_channel(SECURE_CHANNEL_ID) if SECURE_CHANNEL_ID else None
-        if secure is not None:
-            # Dedicated locked-down channel: keep the code, keep it out of the thread.
-            await secure.send(f"**{number}**\n```{body}```")
-        else:
-            # No secure channel configured: don't write the code to Discord at all.
-            channel = await get_or_create_channel(number)
-            await channel.send(
-                "_(message contained a passcode — suppressed. Read it in the "
-                "SignalWire message logs.)_"
+        if SECURE_CHANNEL_ID and secure is None:
+            # Configured but invisible to the bot. Without this the code silently
+            # takes the "no secure channel" path and nobody learns it went nowhere.
+            log.error("passcode not delivered: %s", access_hint(SECURE_CHANNEL_ID, "secure"))
+            await notify_inbox(
+                f"Passcode from **{number}** was suppressed: "
+                f"{access_hint(SECURE_CHANNEL_ID, 'secure')}."
             )
+        elif secure is not None:
+            # Dedicated locked-down channel: keep the code, keep it out of the thread.
+            try:
+                await secure.send(f"**{number}**\n```{body}```")
+                return
+            except discord.Forbidden:
+                # Deliberately fall through to suppression: a code must never land in
+                # the contact channel just because the secure channel is misconfigured.
+                log.error("passcode not delivered: %s", access_hint(SECURE_CHANNEL_ID, "secure"))
+                await notify_inbox(
+                    f"Passcode from **{number}** was suppressed: "
+                    f"{access_hint(SECURE_CHANNEL_ID, 'secure')}."
+                )
+
+        # No usable secure channel: don't write the code to Discord at all.
+        channel = await get_or_create_channel(number)
+        await channel.send(
+            "_(message contained a passcode — suppressed. Read it in the "
+            "SignalWire message logs.)_"
+        )
         return
 
     channel = await get_or_create_channel(number)
@@ -409,13 +453,21 @@ async def inbound_worker() -> None:
         payload = await inbound_queue.get()
         try:
             await deliver_inbound(payload)
+        except discord.Forbidden:
+            # 50001 on the contact channel: say which permission to look at rather
+            # than leaving a bare traceback in the log.
+            log.exception("failed to deliver inbound message: missing Discord access")
+            await notify_inbox(
+                f"Failed to deliver inbound SMS from {payload.get('from')}: the bot is "
+                "missing access to its channel or category. Check that its role has "
+                "View Channel + Send Messages (and Manage Channels, if the contact "
+                "channel still needs creating)."
+            )
         except Exception:  # noqa: BLE001
             log.exception("failed to deliver inbound message")
-            inbox = client.get_channel(INBOX_CHANNEL_ID)
-            if inbox:
-                await inbox.send(
-                    f"Failed to deliver inbound SMS from {payload.get('from')}. Check logs."
-                )
+            await notify_inbox(
+                f"Failed to deliver inbound SMS from {payload.get('from')}. Check logs."
+            )
         finally:
             inbound_queue.task_done()
 
@@ -462,6 +514,31 @@ async def handle_outbound(message: discord.Message, to: str, body: str) -> None:
         await message.reply(f"Send failed: `{exc}`", mention_author=False)
 
 
+async def check_channel_access() -> None:
+    """Report unusable channels at startup instead of when a message needs them.
+
+    The secure channel is the one that matters: nothing routine writes to it, so a
+    permissions mistake there stays invisible until a passcode arrives.
+    """
+    targets = [(INBOX_CHANNEL_ID, "inbox")]
+    if SECURE_CHANNEL_ID:
+        targets.append((SECURE_CHANNEL_ID, "secure"))
+    for channel_id, label in targets:
+        channel = client.get_channel(channel_id)
+        if channel is None:
+            log.error("startup check: %s", access_hint(channel_id, label))
+            continue
+        try:
+            perms = channel.permissions_for(channel.guild.me)
+        except Exception:  # noqa: BLE001
+            log.warning("startup check: could not read permissions on %s channel", label)
+            continue
+        if perms.view_channel and perms.send_messages:
+            log.info("startup check: %s channel #%s is writable", label, channel.name)
+        else:
+            log.error("startup check: %s", access_hint(channel_id, label))
+
+
 _tasks_started = False
 
 
@@ -475,6 +552,7 @@ async def on_ready() -> None:
         if HEARTBEAT_URL:
             asyncio.create_task(heartbeat_loop())
         prune()
+        await check_channel_access()
 
 
 @client.event

@@ -184,6 +184,13 @@ slash, all of it.
 - Without it: nothing is written to Discord at all; read the code in the
   SignalWire message logs.
 
+Locking that channel down is easy to overdo — if the bot itself loses **View
+Channel** or **Send Messages** there, it cannot deliver the code. When that
+happens the code is suppressed rather than rerouted to the contact channel, and
+the bridge posts the reason to `DISCORD_INBOX_CHANNEL_ID` and logs it. The same
+check runs at startup, so a broken secure channel shows up in the log on boot
+rather than the next time a code arrives.
+
 If the number never receives verification codes, set `REDACT_CODES=false` and
 skip the whole thing.
 

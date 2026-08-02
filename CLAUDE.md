@@ -121,7 +121,11 @@ path string passed to `_check` must stay in sync with the route.
   puts an endpoint guarded solely by the signature check on the LAN.
 - **Passcode redaction** (`looks_like_a_code`: a code-ish keyword *and* a 4–8 digit
   number) diverts to `DISCORD_SECURE_CHANNEL_ID` if set, otherwise writes nothing to
-  Discord at all. The no-secure-channel branch must not leak the body.
+  Discord at all. The no-secure-channel branch must not leak the body. A secure channel
+  that is configured but unusable — deleted, invisible to the bot, or `Forbidden` on
+  send — takes that same suppression path rather than falling back to the contact
+  channel, and reports why via `access_hint` to both the log and the inbox channel.
+  Missing access must never downgrade into posting the code somewhere less private.
 - **MMS captions arrive as a `text/plain` media part**, not in `Body` — carriers split
   them out, so an image sent with a caption webhooks in as `Body=""` plus two
   `MediaUrl`s. `deliver_inbound` folds those parts back into the body instead of
