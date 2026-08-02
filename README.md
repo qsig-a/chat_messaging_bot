@@ -94,9 +94,9 @@ required values cause an immediate exit naming the variable.
 | `SIGNALWIRE_SPACE_URL` | yes | — | e.g. `example.signalwire.com` |
 | `SIGNALWIRE_PROJECT_ID` | yes | — | |
 | `SIGNALWIRE_API_TOKEN` | yes | — | REST auth for sending |
+| `SIGNALWIRE_SIGNING_KEY` | yes | — | Key SignalWire signs inbound webhooks with. A separate credential from the API token — if you set it to the token, sending still works but every inbound message is rejected |
 | `SIGNALWIRE_NUMBER` | yes | — | E.164, e.g. `+14165550123` |
 | `PUBLIC_BASE_URL` | yes | — | Public HTTPS base, no trailing slash |
-| `SIGNALWIRE_SIGNING_KEY` | no | API token | Key SignalWire signs inbound webhooks with. Set it when the project's signing key differs from the API token — otherwise sending works but every inbound request is rejected with a bad signature |
 | `DISCORD_CATEGORY_ID` | no | none | Category to create contact channels under |
 | `DISCORD_SECURE_CHANNEL_ID` | no | none | Where passcodes go, if anywhere |
 | `REDACT_CODES` | no | `true` | See [Passcode handling](#passcode-handling) |

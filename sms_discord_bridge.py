@@ -54,11 +54,12 @@ REDACT_CODES = _env("REDACT_CODES", "true").lower() in ("1", "true", "yes")
 SW_SPACE = _env("SIGNALWIRE_SPACE_URL", required=True).replace("https://", "").strip("/")
 SW_PROJECT = _env("SIGNALWIRE_PROJECT_ID", required=True)
 SW_TOKEN = _env("SIGNALWIRE_API_TOKEN", required=True)
-# Webhook signatures are keyed by the project's signing key, which is not always the
-# same credential as the API token used for REST auth — a project can hold several
-# tokens, and only one of them signs. Falls back to the API token, which is correct
-# for projects where they are the same value.
-SW_SIGNING_KEY = _env("SIGNALWIRE_SIGNING_KEY", "").strip() or SW_TOKEN
+# Webhook signatures are keyed by the project's signing key, a separate credential
+# from the API token used for REST auth — a project can hold several tokens, and only
+# one of them signs. Required rather than defaulting to the API token: guessing wrong
+# rejects every inbound message with a 403, which is far harder to spot than a
+# missing-variable exit at startup.
+SW_SIGNING_KEY = _env("SIGNALWIRE_SIGNING_KEY", required=True).strip()
 SW_NUMBER = _env("SIGNALWIRE_NUMBER", required=True)  # E.164, e.g. +14165550123
 
 PUBLIC_BASE_URL = _env("PUBLIC_BASE_URL", required=True).rstrip("/")
@@ -278,12 +279,11 @@ def explain_bad_signature(
         if url != base and valid_signature(url, params, signature):
             return f"signature matches {url!r} instead — {hint}"
 
-    # The two differ only when SIGNALWIRE_SIGNING_KEY is set explicitly; if the API
-    # token is what actually signs, say so rather than blaming the URL.
+    # If the API token is what actually signs, say so rather than blaming the URL.
     if SW_TOKEN != SW_SIGNING_KEY and valid_signature(base, params, signature, SW_TOKEN):
         return (
             "signature matches SIGNALWIRE_API_TOKEN, not SIGNALWIRE_SIGNING_KEY — "
-            "clear SIGNALWIRE_SIGNING_KEY, the API token signs for this project"
+            "this project signs with the API token, so set SIGNALWIRE_SIGNING_KEY to it"
         )
 
     return (
