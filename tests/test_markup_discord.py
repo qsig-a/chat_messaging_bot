@@ -40,13 +40,32 @@ def test_mixed_message(bridge):
     assert bridge.strip_discord_markup(raw) == "check this out: run --now secret"
 
 
-def test_url_is_left_alone(bridge):
-    """Underscores and asterisks inside URLs must survive.
+def test_url_underscores_are_stripped_known_bug(bridge):
+    """Underscores inside URLs do NOT survive. This pins current behaviour.
 
-    NOTE: The current implementation strips underscores inside URLs.
-    This is a known issue where the emphasis regex eats URL underscores.
-    See follow-up: emphasis regex must respect URL boundaries.
+    The emphasis regex pairs delimiters across the whole message with no
+    concept of a URL or an identifier, so any even number of underscores
+    flattens the span between them. Pinned rather than fixed: changing it
+    is a behaviour change to a running deployment and is out of scope for
+    this task. If a later change fixes the regex, this test SHOULD fail --
+    update it then.
     """
-    url = "https://example.com/a_b_c"
-    # ACTUAL: underscores are stripped in URLs
-    assert bridge.strip_discord_markup(url) == "https://example.com/abc"
+    assert bridge.strip_discord_markup("https://example.com/a_b_c") == (
+        "https://example.com/abc"
+    )
+
+
+def test_snake_case_identifiers_are_mangled_known_bug(bridge):
+    """Env var names are the common case: users paste them to troubleshoot."""
+    assert bridge.strip_discord_markup("SIGNALWIRE_API_TOKEN") == "SIGNALWIREAPITOKEN"
+    assert bridge.strip_discord_markup("PUBLIC_BASE_URL") == "PUBLICBASEURL"
+
+
+def test_paired_asterisks_eat_multiplication_known_bug(bridge):
+    """An even number of asterisks anywhere flattens the span between them."""
+    assert bridge.strip_discord_markup("5*x + 3*y") == "5x + 3y"
+
+
+def test_a_single_underscore_or_asterisk_survives(bridge):
+    assert bridge.strip_discord_markup("foo_bar") == "foo_bar"
+    assert bridge.strip_discord_markup("3 * 4 = 12") == "3 * 4 = 12"
