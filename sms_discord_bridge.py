@@ -228,11 +228,15 @@ def chunk(body: str, size: int = MAX_SMS_CHARS) -> list[str]:
             word = word[size:]
         if not word:
             continue
-        if len(cur) + len(word) + 1 > size:
+        if not cur:
+            # No separator is needed to start a chunk, so a word of exactly
+            # `size` fits here. Reserving one anyway flushed an empty `cur`.
+            cur = word
+        elif len(cur) + 1 + len(word) > size:
             out.append(cur)
             cur = word
         else:
-            cur = f"{cur} {word}".strip()
+            cur = f"{cur} {word}"
     if cur:
         out.append(cur)
     return out
