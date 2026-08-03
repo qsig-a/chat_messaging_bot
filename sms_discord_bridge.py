@@ -218,6 +218,16 @@ def chunk(body: str, size: int = MAX_SMS_CHARS) -> list[str]:
         return [body]
     out, cur = [], ""
     for word in body.split(" "):
+        # A word longer than the whole budget can never fit a chunk; hard-split
+        # it rather than emitting an empty piece and then an over-cap one.
+        while len(word) > size:
+            if cur:
+                out.append(cur)
+                cur = ""
+            out.append(word[:size])
+            word = word[size:]
+        if not word:
+            continue
         if len(cur) + len(word) + 1 > size:
             out.append(cur)
             cur = word
