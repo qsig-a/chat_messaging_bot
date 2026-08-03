@@ -260,6 +260,33 @@ def test_no_chunk_exceeds_size_for_long_prose(bridge):
     assert all(len(p) <= MAX for p in bridge.chunk(body, size=MAX))
 
 
+def test_word_of_exactly_size_does_not_emit_an_empty_chunk(bridge):
+    """A word exactly `size` long needs no separator to start a chunk."""
+    assert bridge.chunk("b" * 10 + " c", size=10) == ["bbbbbbbbbb", "c"]
+
+
+def test_oversized_word_that_is_an_exact_multiple_of_size(bridge):
+    """The hard-split leaves a remainder of exactly `size`, then exactly 0."""
+    pieces = bridge.chunk("a" * 20, size=10)
+    assert pieces == ["aaaaaaaaaa", "aaaaaaaaaa"]
+    assert all(pieces)
+
+
+def test_no_empty_piece_at_the_real_sms_limit(bridge):
+    """MAX_SMS_CHARS is 1500, so a 1500-character token is the production case."""
+    pieces = bridge.chunk("a" * 1500 + " bye", size=1500)
+    assert all(pieces)
+    assert all(len(p) <= 1500 for p in pieces)
+    assert "".join(pieces).replace(" ", "") == "a" * 1500 + "bye"
+
+
+def test_consecutive_oversized_words(bridge):
+    pieces = bridge.chunk("a" * 20 + " " + "c" * 20, size=10)
+    assert all(pieces)
+    assert all(len(p) <= 10 for p in pieces)
+    assert "".join(pieces).replace(" ", "") == "a" * 20 + "c" * 20
+
+
 @pytest.mark.parametrize(
     "body,expected",
     [
@@ -326,11 +353,15 @@ def chunk(body: str, size: int = MAX_SMS_CHARS) -> list[str]:
             word = word[size:]
         if not word:
             continue
-        if len(cur) + len(word) + 1 > size:
+        if not cur:
+            # No separator is needed to start a chunk, so a word of exactly
+            # `size` fits here. Reserving one anyway flushes an empty `cur`.
+            cur = word
+        elif len(cur) + 1 + len(word) > size:
             out.append(cur)
             cur = word
         else:
-            cur = f"{cur} {word}".strip()
+            cur = f"{cur} {word}"
     if cur:
         out.append(cur)
     return out
