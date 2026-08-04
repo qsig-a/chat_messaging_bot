@@ -6,6 +6,8 @@ has to keep working across renames and human annotation of topics.
 
 import pytest
 
+from sms_bridge.routing import channel_name_for, normalise_number, number_from_topic, topic_for
+
 
 @pytest.mark.parametrize(
     "raw,expected",
@@ -20,8 +22,8 @@ import pytest
         ("not a number", None),
     ],
 )
-def test_normalise_number(bridge, raw, expected):
-    assert bridge.normalise_number(raw) == expected
+def test_normalise_number(raw, expected):
+    assert normalise_number(raw) == expected
 
 
 @pytest.mark.parametrize(
@@ -37,14 +39,14 @@ def test_normalise_number(bridge, raw, expected):
         ("", None),
     ],
 )
-def test_number_from_topic(bridge, topic, expected):
-    assert bridge.number_from_topic(topic) == expected
+def test_number_from_topic(topic, expected):
+    assert number_from_topic(topic) == expected
 
 
-def test_topic_round_trips_through_number_from_topic(bridge):
+def test_topic_round_trips_through_number_from_topic():
     number = "+14165550123"
-    assert bridge.number_from_topic(bridge.topic_for(number)) == number
+    assert number_from_topic(topic_for(number)) == number
 
 
-def test_channel_name_is_slug_safe(bridge):
-    assert bridge.channel_name_for("+1 (416) 555-0123") == "sms-14165550123"
+def test_channel_name_is_slug_safe():
+    assert channel_name_for("+1 (416) 555-0123") == "sms-14165550123"
