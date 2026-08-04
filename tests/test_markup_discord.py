@@ -2,6 +2,8 @@
 
 import pytest
 
+from sms_bridge.chat.discord import strip_markup
+
 
 @pytest.mark.parametrize(
     "raw,expected",
@@ -27,45 +29,40 @@ import pytest
         ("", ""),
     ],
 )
-def test_strip_discord_markup(bridge, raw, expected):
-    assert bridge.strip_discord_markup(raw) == expected
+def test_strip_discord_markup(raw, expected):
+    assert strip_markup(raw) == expected
 
 
-def test_nested_emphasis(bridge):
-    assert bridge.strip_discord_markup("**bold _and italic_**") == "bold and italic"
+def test_nested_emphasis():
+    assert strip_markup("**bold _and italic_**") == "bold and italic"
 
 
-def test_mixed_message(bridge):
+def test_mixed_message():
     raw = "<@1> check **this** out: `run --now` ||secret||"
-    assert bridge.strip_discord_markup(raw) == "check this out: run --now secret"
+    assert strip_markup(raw) == "check this out: run --now secret"
 
 
-def test_url_underscores_are_stripped_known_bug(bridge):
-    """Underscores inside URLs do NOT survive. This pins current behaviour.
-
-    The emphasis regex pairs delimiters across the whole message with no
-    concept of a URL or an identifier, so any even number of underscores
-    flattens the span between them. Pinned rather than fixed: changing it
-    is a behaviour change to a running deployment and is out of scope for
-    this task. If a later change fixes the regex, this test SHOULD fail --
-    update it then.
-    """
-    assert bridge.strip_discord_markup("https://example.com/a_b_c") == (
-        "https://example.com/abc"
+def test_url_underscores_survive():
+    """The emphasis rule needs word boundaries, so URLs pass through intact."""
+    assert strip_markup("https://example.com/a_b_c") == "https://example.com/a_b_c"
+    assert (
+        strip_markup("https://en.wikipedia.org/wiki/Foo_bar_baz")
+        == "https://en.wikipedia.org/wiki/Foo_bar_baz"
     )
 
 
-def test_snake_case_identifiers_are_mangled_known_bug(bridge):
-    """Env var names are the common case: users paste them to troubleshoot."""
-    assert bridge.strip_discord_markup("SIGNALWIRE_API_TOKEN") == "SIGNALWIREAPITOKEN"
-    assert bridge.strip_discord_markup("PUBLIC_BASE_URL") == "PUBLICBASEURL"
+def test_snake_case_identifiers_survive():
+    """Env var names are the common case: people paste them to troubleshoot."""
+    assert strip_markup("SIGNALWIRE_API_TOKEN") == "SIGNALWIRE_API_TOKEN"
+    assert strip_markup("PUBLIC_BASE_URL") == "PUBLIC_BASE_URL"
+    assert strip_markup("foo_bar") == "foo_bar"
 
 
-def test_paired_asterisks_eat_multiplication_known_bug(bridge):
+def test_paired_asterisks_eat_multiplication_known_bug():
     """An even number of asterisks anywhere flattens the span between them."""
-    assert bridge.strip_discord_markup("5*x + 3*y") == "5x + 3y"
+    assert strip_markup("5*x + 3*y") == "5x + 3y"
 
 
-def test_a_single_underscore_or_asterisk_survives(bridge):
-    assert bridge.strip_discord_markup("foo_bar") == "foo_bar"
-    assert bridge.strip_discord_markup("3 * 4 = 12") == "3 * 4 = 12"
+def test_a_single_underscore_or_asterisk_survives():
+    assert strip_markup("foo_bar") == "foo_bar"
+    assert strip_markup("3 * 4 = 12") == "3 * 4 = 12"
