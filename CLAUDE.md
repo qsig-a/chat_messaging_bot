@@ -63,9 +63,10 @@ Three workflows. Release and publish are manual-first; tests are not.
   release, then calls the publish workflow. Aborts if no commits since the last tag.
 - `.github/workflows/publish-image.yml` — builds and pushes
   `ghcr.io/<owner>/<repo>` — derived from `${{ github.repository }}`, so forks work
-  unedited — tagged `X.Y.Z`, `X.Y`, and `latest`. The `v` is stripped:
-  `metadata-action`'s `type=semver,pattern={{version}}` normalises `v1.2.0` to `1.2.0`,
-  so a git tag and its image tag differ by that prefix. Platforms come from the job-level
+  unedited — tagged `vX.Y.Z`, `vX.Y`, and `latest`, matching the git tag. The `v` in
+  `metadata-action`'s `pattern=v{{version}}` is load-bearing: a bare `{{version}}`
+  normalises `v1.2.0` to `1.2.0` and the two tag spellings drift apart. Images up to
+  `0.2.0` predate this and keep the bare form. Platforms come from the job-level
   `PLATFORMS` env (currently `linux/amd64`); adding `linux/arm64` also requires
   restoring `docker/setup-qemu-action`. It also accepts `workflow_dispatch` to rebuild
   an existing tag without cutting a release.

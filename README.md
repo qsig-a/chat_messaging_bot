@@ -319,10 +319,10 @@ the GitHub release, then builds and pushes the image. The first run starts at
 `v0.1.0`. It refuses to run if nothing has been committed since the last tag.
 
 `.github/workflows/publish-image.yml` does the build, pushing `linux/amd64` to
-`ghcr.io/<owner>/<repo>` tagged three ways — `1.2.0`, `1.2`, and `latest`
-(a prerelease won't move `latest`). Note that the **image** tags carry no `v`
-even though the git tag does: `…:v1.2.0` is a 404, `…:1.2.0` is the image.
-The image name comes from
+`ghcr.io/<owner>/<repo>` tagged three ways — `v1.2.0`, `v1.2`, and `latest`
+(a prerelease won't move `latest`), matching the git tag exactly. Versions up to
+`0.2.0` were published without the `v`; those older image tags keep their
+original spelling. The image name comes from
 `${{ github.repository }}`, so forks publish to their own namespace with no
 edits. It also runs on releases created by hand in the GitHub UI.
 

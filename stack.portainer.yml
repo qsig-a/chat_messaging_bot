@@ -10,8 +10,8 @@
 #
 # IMAGE_REF is the image to run, e.g.
 #   ghcr.io/<owner>/<repo>:latest     track the newest release
-#   ghcr.io/<owner>/<repo>:0.2.0      pin, and upgrade deliberately
-#                                     (image tags carry no `v`, unlike git tags)
+#   ghcr.io/<owner>/<repo>:v0.3.0     pin, and upgrade deliberately
+#                                     (0.2.0 and earlier have no `v`)
 #
 # If the repo is private the package is too: add the registry under
 # Portainer > Registries > Custom registry (ghcr.io, your GitHub username, and
