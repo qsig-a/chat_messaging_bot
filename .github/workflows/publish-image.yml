@@ -88,8 +88,8 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.v.outputs.version }}
             type=raw,value=latest,enable=${{ steps.v.outputs.latest }}
           labels: |
-            org.opencontainers.image.title=SignalWire-Discord SMS bridge
-            org.opencontainers.image.description=Send and receive SMS/MMS from Discord via a SignalWire number
+            org.opencontainers.image.title=SignalWire-Slack/Discord SMS bridge
+            org.opencontainers.image.description=Send and receive SMS/MMS from Slack or Discord via a SignalWire number
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.version=${{ steps.v.outputs.version }}
