@@ -1,0 +1,26 @@
+name: tests
+
+# Unlike release.yml and publish-image.yml, this one is not manual-first: tests
+# that only run locally stop being a safety net the moment someone forgets.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to a full commit SHA, like every third-party action here. A
+      # mutable tag can be repointed at new code by whoever owns the action.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install --require-hashes -r requirements.txt -r requirements-dev.txt
+
+      - name: Run tests
+        run: python3 -m pytest -v
