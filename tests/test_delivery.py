@@ -369,15 +369,15 @@ async def test_partial_multi_chunk_failure_does_not_later_flip_to_ok():
 
 
 async def test_attachments_are_not_dropped_silently():
-    """Until MMS is wired, the user must still learn nothing was sent."""
-    delivery, adapter, store = build()
+    """An attachment too big for MMS must still tell the user it wasn't sent."""
+    delivery, adapter, sent, _ = build_with_media(env_extra={"MAX_MMS_BYTES": "5"})
     await delivery.handle_outbound(
         adapter.make_outbound(
             "", topic=f"sms:{CONTACT}",
             attachments=[Attachment(file_id="F1", filename="a.png", size=10)],
         )
     )
-    assert store.lookup_outbound("SM-sent") is None
+    assert not sent, "nothing goes out over SMS when the only attachment is skipped"
     assert adapter.replies, "the user is told the attachment was not sent"
     assert "not sent" in adapter.replies[0][1]
 
@@ -430,3 +430,89 @@ async def test_intermediate_status_does_nothing():
 
     assert adapter.reactions == []
     assert adapter.unreactions == []
+
+
+# --------------------------------------------------------------------------
+# Outbound media
+# --------------------------------------------------------------------------
+
+def build_with_media(adapter=None, env_extra=None):
+    from sms_bridge.media import MediaTokens
+
+    cfg = load({**ENV, **(env_extra or {})})
+    adapter = adapter or FakeAdapter()
+    sent = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request.content.decode())
+        return httpx.Response(201, json={"sid": "SM-sent"})
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    sw = SignalWire(cfg, http)
+    store = Store(":memory:")
+    media = MediaTokens(cfg.media_signing_key)
+    return Delivery(cfg, adapter, store, sw, media), adapter, sent, media
+
+
+async def test_attachment_becomes_a_signed_media_url():
+    delivery, adapter, sent, media = build_with_media()
+    msg = adapter.make_outbound(
+        "look", topic=f"sms:{CONTACT}",
+        attachments=[Attachment(file_id="F1", filename="a.png", size=100)],
+    )
+
+    await delivery.handle_outbound(msg)
+
+    assert "MediaUrl=" in sent[0]
+    assert "sms.example.com%2Fmedia%2F" in sent[0]
+
+
+async def test_oversized_attachment_is_skipped_and_reported():
+    delivery, adapter, sent, _ = build_with_media(env_extra={"MAX_MMS_BYTES": "50"})
+    msg = adapter.make_outbound(
+        "look", topic=f"sms:{CONTACT}",
+        attachments=[Attachment(file_id="F1", filename="big.png", size=100)],
+    )
+
+    await delivery.handle_outbound(msg)
+
+    assert "MediaUrl=" not in sent[0]
+    assert adapter.replies and "big.png" in adapter.replies[0][1]
+
+
+async def test_media_attaches_only_to_the_first_chunk():
+    delivery, adapter, sent, _ = build_with_media()
+    msg = adapter.make_outbound(
+        "z" * 4000, topic=f"sms:{CONTACT}",
+        attachments=[Attachment(file_id="F1", filename="a.png", size=10)],
+    )
+
+    await delivery.handle_outbound(msg)
+
+    assert len(sent) > 1
+    assert "MediaUrl=" in sent[0]
+    assert all("MediaUrl=" not in body for body in sent[1:])
+
+
+async def test_attachment_with_no_text_still_sends():
+    delivery, adapter, sent, _ = build_with_media()
+    msg = adapter.make_outbound(
+        "", topic=f"sms:{CONTACT}",
+        attachments=[Attachment(file_id="F1", filename="a.png", size=10)],
+    )
+
+    await delivery.handle_outbound(msg)
+
+    assert len(sent) == 1
+    assert "MediaUrl=" in sent[0]
+
+
+async def test_no_media_tokens_means_no_media_urls():
+    """Delivery constructed without a MediaTokens must not crash on attachments."""
+    delivery, adapter, _ = build()
+    msg = adapter.make_outbound(
+        "look", topic=f"sms:{CONTACT}",
+        attachments=[Attachment(file_id="F1", filename="a.png", size=10)],
+    )
+
+    await delivery.handle_outbound(msg)  # must not raise

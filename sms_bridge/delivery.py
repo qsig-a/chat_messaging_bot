@@ -163,15 +163,6 @@ class Delivery:
         body = self._adapter.strip_markup(raw)
         media_urls = await self._media_urls_for(msg)
 
-        if msg.attachments and not media_urls:
-            # Media support arrives with the signed media endpoint. Until then say
-            # so rather than dropping attachments in silence.
-            await self._adapter.reply(
-                msg.message,
-                f"{len(msg.attachments)} attachment(s) were not sent - "
-                "MMS support is not wired up yet.",
-            )
-
         if not body and not media_urls:
             return
 
@@ -202,8 +193,27 @@ class Delivery:
             await self._adapter.reply(msg.message, f"Send failed: `{exc}`")
 
     async def _media_urls_for(self, msg: OutboundMessage) -> list[str]:
-        """Overridden in Task 14 to mint signed URLs. Empty until then."""
-        return []
+        """Mint a short-lived signed URL per attachment.
+
+        Anything over max_mms_bytes is skipped with a visible reply rather than
+        failing silently: carriers commonly reject large MMS regardless of what
+        the API accepts.
+        """
+        if self._media is None or not msg.attachments:
+            return []
+
+        urls: list[str] = []
+        for attachment in msg.attachments:
+            if attachment.size > self._c.max_mms_bytes:
+                await self._adapter.reply(
+                    msg.message,
+                    f"`{attachment.filename}` is {attachment.size} bytes, over the "
+                    f"{self._c.max_mms_bytes}-byte MMS limit - not sent.",
+                )
+                continue
+            token = self._media.mint(attachment.file_id)
+            urls.append(f"{self._c.public_base_url}/media/{token}")
+        return urls
 
     # -- status ----------------------------------------------------------
 
