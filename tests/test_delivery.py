@@ -7,7 +7,7 @@ channel. Every branch of the decision table is covered.
 import httpx
 import pytest
 
-from sms_bridge.chat.base import Attachment, Reaction, SecureResult
+from sms_bridge.chat.base import Reaction, SecureResult
 from sms_bridge.config import load
 from sms_bridge.delivery import Delivery, InboundSms
 from sms_bridge.signalwire import SignalWire
@@ -156,6 +156,40 @@ async def test_passcode_sent_as_an_mms_caption_is_still_redacted():
 
     assert "998877" not in adapter.posted_text()
     assert "suppressed" in adapter.posts[0][1].lower()
+
+
+@pytest.mark.parametrize(
+    "ctype",
+    ["text/plain", "text/plain; charset=utf-8", "Text/Plain; charset=UTF-8",
+     "TEXT/PLAIN", "text/plain ; charset=utf-8"],
+)
+async def test_caption_is_folded_whatever_the_content_type_casing(ctype):
+    """HTTP media types are case-insensitive, so redaction must not depend on casing."""
+    url = "https://media.example/cap"
+    delivery, adapter, _ = build(
+        FakeAdapter(secure_result=SecureResult.NOT_CONFIGURED),
+        media_bodies={url: (b"Your code is 445566", ctype)},
+    )
+    await delivery.handle_inbound(
+        InboundSms(sender=CONTACT, body="", media_urls=(url,), sid="SMc")
+    )
+    assert "445566" not in adapter.posted_text()
+    assert adapter.posts[0][2] == (), "a caption must never upload as a file"
+
+
+async def test_passcode_with_a_binary_attachment_posts_no_files():
+    """A screenshot of the SMS would leak the code the placeholder is hiding."""
+    url = "https://media.example/shot"
+    delivery, adapter, _ = build(
+        FakeAdapter(secure_result=SecureResult.NOT_CONFIGURED),
+        media_bodies={url: (b"\x89PNG-screenshot", "image/png")},
+    )
+    await delivery.handle_inbound(
+        InboundSms(sender=CONTACT, body="Your code is 445566",
+                   media_urls=(url,), sid="SMd")
+    )
+    assert "445566" not in adapter.posted_text()
+    assert all(files == () for _, _, files in adapter.posts)
 
 
 async def test_binary_media_is_attached_not_folded():
@@ -311,6 +345,35 @@ async def test_send_failure_marks_fail_and_replies():
 
     assert (adapter.reactions[-1][1]) is Reaction.FAIL
     assert adapter.replies
+
+
+async def test_partial_multi_chunk_failure_does_not_later_flip_to_ok():
+    """Chunk 1 succeeds, chunk 2 fails; chunk 1's delivery callback must not undo FAIL."""
+    calls = {"n": 0}
+
+    def flaky(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(201, json={"sid": "SM-part1"})
+        return httpx.Response(400, json={"message": "nope"})
+
+    delivery, adapter, store = build(send_handler=flaky)
+    await delivery.handle_outbound(
+        adapter.make_outbound("z" * 4000, topic=f"sms:{CONTACT}")
+    )
+    assert adapter.reactions[-1][1] is Reaction.FAIL
+    assert store.lookup_outbound("SM-part1") is None
+
+    await delivery.update_status("SM-part1", "delivered", "")
+    assert all(r is not Reaction.OK for _, r in adapter.reactions)
+
+
+async def test_empty_note_prefix_does_not_swallow_every_message():
+    delivery, adapter, store = build(env_extra={"NOTE_PREFIX": ""})
+    await delivery.handle_outbound(
+        adapter.make_outbound("hello", topic=f"sms:{CONTACT}")
+    )
+    assert store.lookup_outbound("SM-sent") is not None
 
 
 # --------------------------------------------------------------------------

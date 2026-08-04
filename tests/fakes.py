@@ -88,7 +88,18 @@ class FakeAdapter:
 
     # -- test helpers ----------------------------------------------------
     def posted_text(self) -> str:
-        return "\n".join(text for _, text, _ in self.posts)
+        """Everything a contact channel received - text, filenames, and file bytes.
+
+        Passcode assertions depend on this seeing attachments too: a code that
+        leaks as an uploaded file is still a leak.
+        """
+        parts = []
+        for _, text, files in self.posts:
+            parts.append(text)
+            for f in files:
+                parts.append(f.filename)
+                parts.append(f.data.decode("utf-8", "replace"))
+        return "\n".join(parts)
 
     def make_outbound(self, text: str, topic: str | None, attachments=()) -> OutboundMessage:
         return OutboundMessage(

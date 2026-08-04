@@ -94,6 +94,16 @@ async def test_fetch_media_returns_none_on_error():
     assert await sw.fetch_media("https://media.example/gone") is None
 
 
+async def test_content_type_is_normalised():
+    def handler(request):
+        return httpx.Response(200, content=b"hi",
+                              headers={"content-type": "Text/Plain; charset=UTF-8"})
+    _, sw = make(handler)
+    data, filename, ctype = await sw.fetch_media("https://media.example/x")
+    assert ctype == "text/plain"
+    assert filename == "mms.txt"
+
+
 async def test_unknown_content_type_falls_back_to_bin():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=b"..", headers={"content-type": "application/x-weird"})

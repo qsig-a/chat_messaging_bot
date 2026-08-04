@@ -12,7 +12,6 @@ import logging
 from dataclasses import dataclass, field
 
 from .chat.base import (
-    Attachment,
     ChannelRef,
     InboundFile,
     MessageRef,
@@ -90,7 +89,7 @@ class Delivery:
             return
 
         channel = await self._channel_for(sms.sender)
-        content = body or NO_BODY_NOTICE
+        content = body.strip() or NO_BODY_NOTICE
         limit = self._adapter.max_post_chars
         pending = files
         for piece in [content[i:i + limit] for i in range(0, len(content), limit)]:
@@ -128,10 +127,10 @@ class Delivery:
     async def handle_outbound(self, msg: OutboundMessage) -> None:
         text = msg.text or ""
 
-        if text.startswith(self._c.note_prefix):
+        if self._c.note_prefix and text.startswith(self._c.note_prefix):
             return  # internal note: visible in chat, never sent
 
-        if text.startswith(self._c.command_prefix):
+        if self._c.command_prefix and text.startswith(self._c.command_prefix):
             await self._handle_command(msg, text)
             return
 
@@ -172,17 +171,23 @@ class Delivery:
             log.info("outbound to %s is %d segments", to, segments)
 
         await self._adapter.react(msg.message, Reaction.PENDING)
+        sent_sids: list[str] = []
         try:
             pieces = chunk(body) if body else [""]
             for index, piece in enumerate(pieces):
                 sid = await self._sw.send_sms(
                     to, piece, media_urls if index == 0 else ()
                 )
+                sent_sids.append(sid)
                 self._store.remember_outbound(
                     sid, msg.message.channel_id, msg.message.message_id
                 )
         except Exception as exc:  # noqa: BLE001
             log.exception("send failed")
+            # Forget the chunks that did go out: a late `delivered` callback for
+            # one of them would otherwise put OK on a message we just marked FAIL.
+            for sid in sent_sids:
+                self._store.forget_outbound(sid)
             await self._adapter.unreact(msg.message, Reaction.PENDING)
             await self._adapter.react(msg.message, Reaction.FAIL)
             await self._adapter.reply(msg.message, f"Send failed: `{exc}`")

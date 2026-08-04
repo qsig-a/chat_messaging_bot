@@ -79,7 +79,12 @@ class SignalWire:
             return None
         if len(r.content) > MAX_UPLOAD_BYTES:
             return None
-        ctype = r.headers.get("content-type", "application/octet-stream").split(";")[0]
+        ctype = (
+            r.headers.get("content-type", "application/octet-stream")
+            .split(";")[0]
+            .strip()
+            .lower()
+        )
         return r.content, f"mms.{_EXTENSIONS.get(ctype, 'bin')}", ctype
 
     def check(self, request, path: str, params: dict[str, str]) -> bool:

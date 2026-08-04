@@ -42,6 +42,11 @@ class Store:
         )
         self._db.commit()
 
+    def forget_outbound(self, sid: str) -> None:
+        """Drop a recorded SID so a late status callback cannot revive it."""
+        self._db.execute("DELETE FROM outbound WHERE sid = ?", (sid,))
+        self._db.commit()
+
     def lookup_outbound(self, sid: str) -> tuple[str, str] | None:
         row = self._db.execute(
             "SELECT channel_id, message_id FROM outbound WHERE sid = ?", (sid,)
