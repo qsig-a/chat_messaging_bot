@@ -5019,7 +5019,7 @@ git commit -m "feat: run the startup channel access check on both platforms"
 
 - [ ] **Step 4: Create the Slack app and verify end to end**
 
-Create a Slack app with these bot scopes — `chat:write`, `groups:write`, `groups:read`, `files:read`, `reactions:write` — plus the app-level scope `connections:write`, and enable Socket Mode. Subscribe to bot events: `message.groups`, `channel_created`, `channel_rename`, `channel_archive`.
+Create a Slack app with these bot scopes — `chat:write`, `groups:write`, `groups:read`, `files:read`, `files:write`, `reactions:write` — plus the app-level scope `connections:write`, and enable Socket Mode. Subscribe to bot events: `message.groups`, `channel_created`, `channel_rename`, `channel_archive`.
 
 Run against a second SignalWire number with `CHAT_PLATFORM=slack`, then confirm:
 
@@ -5069,7 +5069,7 @@ After the Discord block:
 ```
 # --- Slack (required when CHAT_PLATFORM=slack) ---
 # Bot User OAuth Token. Scopes: chat:write, groups:write, groups:read,
-# files:read, reactions:write
+# files:read, files:write, reactions:write
 #SLACK_BOT_TOKEN=xoxb-your-bot-token
 # App-Level Token with connections:write, for Socket Mode
 #SLACK_APP_TOKEN=xapp-your-app-token
