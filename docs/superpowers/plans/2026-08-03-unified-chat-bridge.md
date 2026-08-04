@@ -500,7 +500,12 @@ git commit -m "test: cover Twilio-scheme webhook signature validation"
 
 **Interfaces:**
 - Consumes: `bridge.strip_discord_markup(text)`
-- Produces: the contract the Discord adapter's `strip_markup` must preserve in Task 12.
+- Produces: the contract the Discord adapter's `strip_markup` must preserve in Task 10.
+
+Note: `test_url_is_left_alone` as written below **fails** — the emphasis regex has no
+word-boundary rule, so any even number of underscores flattens the span between them
+(`SIGNALWIRE_API_TOKEN` → `SIGNALWIREAPITOKEN`). Pin the actual behaviour here and leave
+the source alone; Task 10 fixes it when the function moves into the adapter.
 
 - [ ] **Step 1: Write the tests**
 
@@ -2375,7 +2380,15 @@ _EMOJI = {
 
 _CODEBLOCK = re.compile(r"```(?:[a-zA-Z0-9+-]*\n)?(.*?)```", re.S)
 _INLINE = re.compile(r"`([^`]*)`")
-_EMPHASIS = re.compile(r"(\*\*\*|\*\*|\*|___|__|_|~~|\|\|)(.+?)\1", re.S)
+# Asterisk, tilde and spoiler delimiters pair freely, which matches how Discord
+# renders them - it really does italicise across `5*x + 3*y`.
+_EMPHASIS = re.compile(r"(\*\*\*|\*\*|\*|~~|\|\|)(.+?)\1", re.S)
+# Underscores need word boundaries, which Discord also requires: it does not
+# italicise snake_case_name. Without this guard any even number of underscores
+# flattened the span between them, so `SIGNALWIRE_API_TOKEN` reached the handset
+# as `SIGNALWIREAPITOKEN` - env var names are exactly what people paste when
+# troubleshooting this bridge.
+_UNDERSCORE = re.compile(r"(?<![A-Za-z0-9_])(___|__|_)(.+?)\1(?![A-Za-z0-9_])", re.S)
 _CUSTOM_EMOJI = re.compile(r"<a?:([A-Za-z0-9_]+):\d+>")
 _MENTION = re.compile(r"<[@#][!&]?\d+>")
 
@@ -2386,6 +2399,7 @@ def strip_markup(text: str) -> str:
     text = _INLINE.sub(r"\1", text)
     for _ in range(3):  # nested emphasis
         text = _EMPHASIS.sub(r"\2", text)
+        text = _UNDERSCORE.sub(r"\2", text)
     text = _CUSTOM_EMOJI.sub(r":\1:", text)
     text = _MENTION.sub("", text)
     text = re.sub(r"^>\s?", "", text, flags=re.M)
@@ -2611,6 +2625,36 @@ from sms_bridge.chat.discord import strip_markup
 ```
 
 Replace `bridge.strip_discord_markup(...)` with `strip_markup(...)` throughout.
+
+**Then flip the four known-bug tests, because this task fixes the bug they pinned.**
+Task 4 pinned the broken underscore behaviour deliberately; the `_UNDERSCORE` rule above
+corrects it. Delete `test_url_underscores_are_stripped_known_bug` and
+`test_snake_case_identifiers_are_mangled_known_bug`, and replace them with:
+
+```python
+def test_url_underscores_survive():
+    """The emphasis rule needs word boundaries, so URLs pass through intact."""
+    assert strip_markup("https://example.com/a_b_c") == "https://example.com/a_b_c"
+    assert (
+        strip_markup("https://en.wikipedia.org/wiki/Foo_bar_baz")
+        == "https://en.wikipedia.org/wiki/Foo_bar_baz"
+    )
+
+
+def test_snake_case_identifiers_survive():
+    """Env var names are the common case: people paste them to troubleshoot."""
+    assert strip_markup("SIGNALWIRE_API_TOKEN") == "SIGNALWIRE_API_TOKEN"
+    assert strip_markup("PUBLIC_BASE_URL") == "PUBLIC_BASE_URL"
+    assert strip_markup("foo_bar") == "foo_bar"
+```
+
+Keep `test_paired_asterisks_eat_multiplication_known_bug` and
+`test_a_single_underscore_or_asterisk_survives` exactly as they are — asterisk pairing is
+**not** a bug. Discord genuinely italicises across `5*x + 3*y`, so flattening it is correct
+behaviour for SMS, and that test still documents it accurately.
+
+Verify the underscore forms that *are* emphasis still flatten: `_italic_` → `italic` and
+`__underline__` → `underline` are already covered by the parametrized table.
 
 - [ ] **Step 3: Run the suite**
 
