@@ -83,9 +83,13 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ghcr.io/${{ github.repository }}
+          # The `v` in the patterns is deliberate: a bare {{version}} would
+          # normalise v1.2.0 to 1.2.0, leaving the image tag and the git tag
+          # spelled differently. Images up to 0.2.0 were published that way;
+          # v0.3.0 onward match their tag.
           tags: |
-            type=semver,pattern={{version}},value=${{ steps.v.outputs.version }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ steps.v.outputs.version }}
+            type=semver,pattern=v{{version}},value=${{ steps.v.outputs.version }}
+            type=semver,pattern=v{{major}}.{{minor}},value=${{ steps.v.outputs.version }}
             type=raw,value=latest,enable=${{ steps.v.outputs.latest }}
           labels: |
             org.opencontainers.image.title=SignalWire-Slack/Discord SMS bridge
