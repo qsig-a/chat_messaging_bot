@@ -1,5 +1,5 @@
 [Unit]
-Description=SignalWire <-> Discord SMS bridge
+Description=SignalWire <-> Slack/Discord SMS bridge
 After=network-online.target
 Wants=network-online.target
 
@@ -14,7 +14,7 @@ User=sms
 Group=sms
 WorkingDirectory=/opt/sms-bridge
 EnvironmentFile=/opt/sms-bridge/.env
-ExecStart=/opt/sms-bridge/.venv/bin/python /opt/sms-bridge/sms_discord_bridge.py
+ExecStart=/opt/sms-bridge/.venv/bin/python -m sms_bridge
 Restart=on-failure
 RestartSec=5s
 

@@ -34,7 +34,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
     BIND_PORT=8080
 
 WORKDIR /app
-COPY sms_discord_bridge.py .
+COPY sms_bridge/ ./sms_bridge/
 
 # SQLite lives here; mounted as a named volume in compose.
 RUN mkdir -p /data && chown app:app /data
@@ -46,4 +46,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD ["sh", "-c", "curl -fsS http://127.0.0.1:8080/healthz || exit 1"]
 
-ENTRYPOINT ["python", "sms_discord_bridge.py"]
+ENTRYPOINT ["python", "-m", "sms_bridge"]

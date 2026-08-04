@@ -1,4 +1,4 @@
-# Portainer stack for the SignalWire <-> Discord SMS bridge.
+# Portainer stack for the SignalWire <-> Slack/Discord SMS bridge.
 #
 # Portainer's stack editor can't build from a Dockerfile, so this pulls a
 # pre-built image from GHCR — published by .github/workflows/publish-image.yml
@@ -21,11 +21,20 @@ services:
     image: ${IMAGE_REF}
     restart: unless-stopped
     environment:
-      DISCORD_TOKEN: ${DISCORD_TOKEN}
-      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID}
-      DISCORD_INBOX_CHANNEL_ID: ${DISCORD_INBOX_CHANNEL_ID}
+      # discord or slack. Only the selected platform's block below is
+      # required; the process exits at startup naming anything it needs and
+      # cannot find, so leaving the other block empty is safe.
+      CHAT_PLATFORM: ${CHAT_PLATFORM:-discord}
+      DISCORD_TOKEN: ${DISCORD_TOKEN:-}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
+      DISCORD_INBOX_CHANNEL_ID: ${DISCORD_INBOX_CHANNEL_ID:-}
       DISCORD_CATEGORY_ID: ${DISCORD_CATEGORY_ID:-}
       DISCORD_SECURE_CHANNEL_ID: ${DISCORD_SECURE_CHANNEL_ID:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
+      SLACK_INBOX_CHANNEL_ID: ${SLACK_INBOX_CHANNEL_ID:-}
+      SLACK_SECURE_CHANNEL_ID: ${SLACK_SECURE_CHANNEL_ID:-}
+      SLACK_INVITE_USERS: ${SLACK_INVITE_USERS:-}
       SIGNALWIRE_SPACE_URL: ${SIGNALWIRE_SPACE_URL}
       SIGNALWIRE_PROJECT_ID: ${SIGNALWIRE_PROJECT_ID}
       SIGNALWIRE_API_TOKEN: ${SIGNALWIRE_API_TOKEN}
@@ -35,6 +44,8 @@ services:
       VERIFY_SIGNATURE: ${VERIFY_SIGNATURE:-true}
       REDACT_CODES: ${REDACT_CODES:-true}
       HEARTBEAT_URL: ${HEARTBEAT_URL:-}
+      MEDIA_SIGNING_KEY: ${MEDIA_SIGNING_KEY:-}
+      MAX_MMS_BYTES: ${MAX_MMS_BYTES:-}
       # Fixed for the container — leave these as-is.
       BIND_HOST: 0.0.0.0
       BIND_PORT: "8080"

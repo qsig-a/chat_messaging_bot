@@ -11,7 +11,7 @@ services:
     # To run a published release instead of building locally, comment out
     # `build` above and use:
     #   image: ghcr.io/<owner>/<repo>:latest
-    image: sms-discord-bridge:local
+    image: sms-bridge:local
     restart: unless-stopped
     env_file:
       - .env
@@ -30,7 +30,7 @@ services:
     command: tunnel --no-autoupdate run
     environment:
       # Read from .env by Compose. Passed explicitly rather than via env_file
-      # so the tunnel container doesn't receive the Discord and SignalWire
+      # so the tunnel container doesn't receive the chat and SignalWire
       # credentials as well.
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
     depends_on:

@@ -260,6 +260,33 @@ def test_no_chunk_exceeds_size_for_long_prose(bridge):
     assert all(len(p) <= MAX for p in bridge.chunk(body, size=MAX))
 
 
+def test_word_of_exactly_size_does_not_emit_an_empty_chunk(bridge):
+    """A word exactly `size` long needs no separator to start a chunk."""
+    assert bridge.chunk("b" * 10 + " c", size=10) == ["bbbbbbbbbb", "c"]
+
+
+def test_oversized_word_that_is_an_exact_multiple_of_size(bridge):
+    """The hard-split leaves a remainder of exactly `size`, then exactly 0."""
+    pieces = bridge.chunk("a" * 20, size=10)
+    assert pieces == ["aaaaaaaaaa", "aaaaaaaaaa"]
+    assert all(pieces)
+
+
+def test_no_empty_piece_at_the_real_sms_limit(bridge):
+    """MAX_SMS_CHARS is 1500, so a 1500-character token is the production case."""
+    pieces = bridge.chunk("a" * 1500 + " bye", size=1500)
+    assert all(pieces)
+    assert all(len(p) <= 1500 for p in pieces)
+    assert "".join(pieces).replace(" ", "") == "a" * 1500 + "bye"
+
+
+def test_consecutive_oversized_words(bridge):
+    pieces = bridge.chunk("a" * 20 + " " + "c" * 20, size=10)
+    assert all(pieces)
+    assert all(len(p) <= 10 for p in pieces)
+    assert "".join(pieces).replace(" ", "") == "a" * 20 + "c" * 20
+
+
 @pytest.mark.parametrize(
     "body,expected",
     [
@@ -326,11 +353,15 @@ def chunk(body: str, size: int = MAX_SMS_CHARS) -> list[str]:
             word = word[size:]
         if not word:
             continue
-        if len(cur) + len(word) + 1 > size:
+        if not cur:
+            # No separator is needed to start a chunk, so a word of exactly
+            # `size` fits here. Reserving one anyway flushes an empty `cur`.
+            cur = word
+        elif len(cur) + 1 + len(word) > size:
             out.append(cur)
             cur = word
         else:
-            cur = f"{cur} {word}".strip()
+            cur = f"{cur} {word}"
     if cur:
         out.append(cur)
     return out
@@ -469,7 +500,12 @@ git commit -m "test: cover Twilio-scheme webhook signature validation"
 
 **Interfaces:**
 - Consumes: `bridge.strip_discord_markup(text)`
-- Produces: the contract the Discord adapter's `strip_markup` must preserve in Task 12.
+- Produces: the contract the Discord adapter's `strip_markup` must preserve in Task 10.
+
+Note: `test_url_is_left_alone` as written below **fails** — the emphasis regex has no
+word-boundary rule, so any even number of underscores flattens the span between them
+(`SIGNALWIRE_API_TOKEN` → `SIGNALWIREAPITOKEN`). Pin the actual behaviour here and leave
+the source alone; Task 10 fixes it when the function moves into the adapter.
 
 - [ ] **Step 1: Write the tests**
 
@@ -725,6 +761,10 @@ DEFAULT_MAX_MMS_BYTES = 1024 * 1024
 class ConfigError(Exception):
     """Configuration is unusable. __main__ turns this into a startup exit."""
 
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
 
 @dataclass(frozen=True)
 class Config:
@@ -769,6 +809,21 @@ def _flag(env: Mapping[str, str], name: str, default: str = "true") -> bool:
     return env.get(name, default).strip().lower() in ("1", "true", "yes")
 
 
+def _int(env: Mapping[str, str], name: str, default: int = 0) -> int:
+    """Parse an integer setting, or fail the way every other config error fails.
+
+    A bare ValueError here would escape the ConfigError contract and reach the
+    user as a traceback instead of a startup message naming the variable.
+    """
+    raw = (env.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        raise ConfigError(f"{name}={raw!r} is not a whole number") from None
+
+
 def load(env: Mapping[str, str] | None = None) -> Config:
     env = os.environ if env is None else env
     missing: list[str] = []
@@ -786,7 +841,12 @@ def load(env: Mapping[str, str] | None = None) -> Config:
             missing.append(f"{name} (required when CHAT_PLATFORM={owner})" if owner else name)
         return value
 
-    sw_space = need("SIGNALWIRE_SPACE_URL").replace("https://", "").strip("/")
+    sw_space = need("SIGNALWIRE_SPACE_URL")
+    for _scheme in ("https://", "http://"):
+        if sw_space.startswith(_scheme):
+            sw_space = sw_space[len(_scheme):]
+            break
+    sw_space = sw_space.strip("/")
     sw_project = need("SIGNALWIRE_PROJECT_ID")
     sw_token = need("SIGNALWIRE_API_TOKEN")
     sw_signing_key = need("SIGNALWIRE_SIGNING_KEY")
@@ -814,10 +874,10 @@ def load(env: Mapping[str, str] | None = None) -> Config:
     return Config(
         platform=platform,
         discord_token=discord_token,
-        discord_guild_id=int(discord_guild or 0),
-        discord_category_id=int(env.get("DISCORD_CATEGORY_ID") or 0),
-        discord_inbox_channel_id=int(discord_inbox or 0),
-        discord_secure_channel_id=int(env.get("DISCORD_SECURE_CHANNEL_ID") or 0),
+        discord_guild_id=_int(env, "DISCORD_GUILD_ID"),
+        discord_category_id=_int(env, "DISCORD_CATEGORY_ID"),
+        discord_inbox_channel_id=_int(env, "DISCORD_INBOX_CHANNEL_ID"),
+        discord_secure_channel_id=_int(env, "DISCORD_SECURE_CHANNEL_ID"),
         slack_bot_token=slack_bot,
         slack_app_token=slack_app,
         slack_inbox_channel_id=slack_inbox,
@@ -830,7 +890,7 @@ def load(env: Mapping[str, str] | None = None) -> Config:
         sw_number=sw_number,
         public_base_url=public_base_url,
         bind_host=env.get("BIND_HOST", "0.0.0.0"),
-        bind_port=int(env.get("BIND_PORT") or 8080),
+        bind_port=_int(env, "BIND_PORT", 8080),
         verify_signature=_flag(env, "VERIFY_SIGNATURE"),
         redact_codes=_flag(env, "REDACT_CODES"),
         db_path=env.get("DB_PATH", "bridge.sqlite3"),
@@ -838,7 +898,7 @@ def load(env: Mapping[str, str] | None = None) -> Config:
         command_prefix=env.get("COMMAND_PREFIX", "!sms"),
         note_prefix=env.get("NOTE_PREFIX", "//"),
         media_signing_key=media_key,
-        max_mms_bytes=int(env.get("MAX_MMS_BYTES") or DEFAULT_MAX_MMS_BYTES),
+        max_mms_bytes=_int(env, "MAX_MMS_BYTES", DEFAULT_MAX_MMS_BYTES),
     )
 ```
 
@@ -989,6 +1049,11 @@ class Store:
             "SELECT channel_id, message_id FROM outbound WHERE sid = ?", (sid,)
         ).fetchone()
         return (row[0], row[1]) if row else None
+
+    def forget_outbound(self, sid: str) -> None:
+        """Drop a recorded SID so a late status callback cannot revive it."""
+        self._db.execute("DELETE FROM outbound WHERE sid = ?", (sid,))
+        self._db.commit()
 
     def prune(self, days: int = 30) -> None:
         cutoff = int(time.time()) - days * 86400
@@ -1279,13 +1344,19 @@ class SignalWire:
     async def send_sms(
         self, to: str, body: str, media_urls: Sequence[str] = ()
     ) -> str:
-        data: list[tuple[str, str]] = [
-            ("From", self._c.sw_number),
-            ("To", to),
-            ("Body", body),
-            ("StatusCallback", f"{self._c.public_base_url}/sms/status"),
-        ]
-        data.extend(("MediaUrl", url) for url in media_urls)
+        # httpx's data= only builds an async-compatible body for a Mapping. A list
+        # of (key, value) pairs is treated as raw content= and produces a sync-only
+        # iterator stream, so AsyncClient raises "Attempted to send an sync request
+        # with an AsyncClient instance" on EVERY send, media or not. A dict with a
+        # list value is the supported way to repeat a key in one urlencoded body.
+        data: dict[str, str | list[str]] = {
+            "From": self._c.sw_number,
+            "To": to,
+            "Body": body,
+            "StatusCallback": f"{self._c.public_base_url}/sms/status",
+        }
+        if media_urls:
+            data["MediaUrl"] = list(media_urls)
         r = await self._http.post(
             f"{self._c.sw_api_base}/Messages.json",
             data=data,
@@ -1306,7 +1377,16 @@ class SignalWire:
             return None
         if len(r.content) > MAX_UPLOAD_BYTES:
             return None
-        ctype = r.headers.get("content-type", "application/octet-stream").split(";")[0]
+        # Normalise here, once. HTTP media types are case-insensitive (RFC 9110),
+        # and delivery.py compares this against "text/plain" to decide whether a
+        # part is an MMS caption. A `Text/Plain` header skipping that fold meant a
+        # passcode caption bypassed redaction and uploaded to the contact channel.
+        ctype = (
+            r.headers.get("content-type", "application/octet-stream")
+            .split(";")[0]
+            .strip()
+            .lower()
+        )
         return r.content, f"mms.{_EXTENSIONS.get(ctype, 'bin')}", ctype
 
     def check_signature(self, path: str, params: dict[str, str], signature: str) -> bool:
@@ -1622,7 +1702,19 @@ class FakeAdapter:
 
     # -- test helpers ----------------------------------------------------
     def posted_text(self) -> str:
-        return "\n".join(text for _, text, _ in self.posts)
+        """Everything a contact channel received - text, filenames, and file bytes.
+
+        Passcode assertions depend on this seeing attachments too: a code that
+        leaks as an uploaded file is still a leak, and text-only inspection hid
+        exactly that bug.
+        """
+        parts = []
+        for _, text, files in self.posts:
+            parts.append(text)
+            for f in files:
+                parts.append(f.filename)
+                parts.append(f.data.decode("utf-8", "replace"))
+        return "\n".join(parts)
 
     def make_outbound(self, text: str, topic: str | None, attachments=()) -> OutboundMessage:
         return OutboundMessage(
@@ -2132,7 +2224,7 @@ class Delivery:
             return
 
         channel = await self._channel_for(sms.sender)
-        content = body or NO_BODY_NOTICE
+        content = body.strip() or NO_BODY_NOTICE
         limit = self._adapter.max_post_chars
         pending = files
         for piece in [content[i:i + limit] for i in range(0, len(content), limit)]:
@@ -2170,10 +2262,12 @@ class Delivery:
     async def handle_outbound(self, msg: OutboundMessage) -> None:
         text = msg.text or ""
 
-        if text.startswith(self._c.note_prefix):
+        # Guard the empty prefix: "".startswith("") is True, so NOTE_PREFIX= in a
+        # .env would silently turn every outbound message into an internal note.
+        if self._c.note_prefix and text.startswith(self._c.note_prefix):
             return  # internal note: visible in chat, never sent
 
-        if text.startswith(self._c.command_prefix):
+        if self._c.command_prefix and text.startswith(self._c.command_prefix):
             await self._handle_command(msg, text)
             return
 
@@ -2214,17 +2308,23 @@ class Delivery:
             log.info("outbound to %s is %d segments", to, segments)
 
         await self._adapter.react(msg.message, Reaction.PENDING)
+        sent_sids: list[str] = []
         try:
             pieces = chunk(body) if body else [""]
             for index, piece in enumerate(pieces):
                 sid = await self._sw.send_sms(
                     to, piece, media_urls if index == 0 else ()
                 )
+                sent_sids.append(sid)
                 self._store.remember_outbound(
                     sid, msg.message.channel_id, msg.message.message_id
                 )
         except Exception as exc:  # noqa: BLE001
             log.exception("send failed")
+            # Forget the chunks that did go out: a late `delivered` callback for
+            # one of them would otherwise put OK on a message just marked FAIL.
+            for sid in sent_sids:
+                self._store.forget_outbound(sid)
             await self._adapter.unreact(msg.message, Reaction.PENDING)
             await self._adapter.react(msg.message, Reaction.FAIL)
             await self._adapter.reply(msg.message, f"Send failed: `{exc}`")
@@ -2344,7 +2444,15 @@ _EMOJI = {
 
 _CODEBLOCK = re.compile(r"```(?:[a-zA-Z0-9+-]*\n)?(.*?)```", re.S)
 _INLINE = re.compile(r"`([^`]*)`")
-_EMPHASIS = re.compile(r"(\*\*\*|\*\*|\*|___|__|_|~~|\|\|)(.+?)\1", re.S)
+# Asterisk, tilde and spoiler delimiters pair freely, which matches how Discord
+# renders them - it really does italicise across `5*x + 3*y`.
+_EMPHASIS = re.compile(r"(\*\*\*|\*\*|\*|~~|\|\|)(.+?)\1", re.S)
+# Underscores need word boundaries, which Discord also requires: it does not
+# italicise snake_case_name. Without this guard any even number of underscores
+# flattened the span between them, so `SIGNALWIRE_API_TOKEN` reached the handset
+# as `SIGNALWIREAPITOKEN` - env var names are exactly what people paste when
+# troubleshooting this bridge.
+_UNDERSCORE = re.compile(r"(?<![A-Za-z0-9_])(___|__|_)(.+?)\1(?![A-Za-z0-9_])", re.S)
 _CUSTOM_EMOJI = re.compile(r"<a?:([A-Za-z0-9_]+):\d+>")
 _MENTION = re.compile(r"<[@#][!&]?\d+>")
 
@@ -2355,6 +2463,7 @@ def strip_markup(text: str) -> str:
     text = _INLINE.sub(r"\1", text)
     for _ in range(3):  # nested emphasis
         text = _EMPHASIS.sub(r"\2", text)
+        text = _UNDERSCORE.sub(r"\2", text)
     text = _CUSTOM_EMOJI.sub(r":\1:", text)
     text = _MENTION.sub("", text)
     text = re.sub(r"^>\s?", "", text, flags=re.M)
@@ -2580,6 +2689,36 @@ from sms_bridge.chat.discord import strip_markup
 ```
 
 Replace `bridge.strip_discord_markup(...)` with `strip_markup(...)` throughout.
+
+**Then flip the four known-bug tests, because this task fixes the bug they pinned.**
+Task 4 pinned the broken underscore behaviour deliberately; the `_UNDERSCORE` rule above
+corrects it. Delete `test_url_underscores_are_stripped_known_bug` and
+`test_snake_case_identifiers_are_mangled_known_bug`, and replace them with:
+
+```python
+def test_url_underscores_survive():
+    """The emphasis rule needs word boundaries, so URLs pass through intact."""
+    assert strip_markup("https://example.com/a_b_c") == "https://example.com/a_b_c"
+    assert (
+        strip_markup("https://en.wikipedia.org/wiki/Foo_bar_baz")
+        == "https://en.wikipedia.org/wiki/Foo_bar_baz"
+    )
+
+
+def test_snake_case_identifiers_survive():
+    """Env var names are the common case: people paste them to troubleshoot."""
+    assert strip_markup("SIGNALWIRE_API_TOKEN") == "SIGNALWIRE_API_TOKEN"
+    assert strip_markup("PUBLIC_BASE_URL") == "PUBLIC_BASE_URL"
+    assert strip_markup("foo_bar") == "foo_bar"
+```
+
+Keep `test_paired_asterisks_eat_multiplication_known_bug` and
+`test_a_single_underscore_or_asterisk_survives` exactly as they are — asterisk pairing is
+**not** a bug. Discord genuinely italicises across `5*x + 3*y`, so flattening it is correct
+behaviour for SMS, and that test still documents it accurately.
+
+Verify the underscore forms that *are* emphasis still flatten: `_italic_` → `italic` and
+`__underline__` → `underline` are already covered by the parametrized table.
 
 - [ ] **Step 3: Run the suite**
 
@@ -2811,7 +2950,9 @@ def create_app(
         params = {k: str(v) for k, v in form.items()}
         if config.verify_signature:
             signature = request.headers.get("X-Twilio-Signature", "")
-            if not signalwire.check_signature(path, params, signature):
+            # SignalWire.check reads the header itself; `signature` is pulled out
+            # separately here only so explain_bad_signature can report on it.
+            if not signalwire.check(request, path, params):
                 log.warning(
                     "rejected request with bad signature on %s: %s",
                     path,
@@ -3813,8 +3954,9 @@ async def test_channels_without_a_topic_token_are_ignored():
     lister = make_lister([([ch("C1", "general chat"), ch("C2", "")], None)])
     index = ChannelIndex(lister)
 
-    await index.refresh()
-
+    # No explicit refresh() here: lookup()'s own on-demand refresh consumes the
+    # single page above. Calling refresh() first would exhaust it, and the miss
+    # below would then demand a second page the lister cannot serve.
     assert await index.lookup("+14165550123") is None
 
 
@@ -4409,7 +4551,20 @@ In `sms_bridge/chat/slack.py`, change the constructor:
 ```python
     def __init__(self, config: Config, web=None, socket=None) -> None:
         self._c = config
-        self._web = web or AsyncWebClient(token=config.slack_bot_token)
+        # The SDK's default handlers cover connection errors only. Without an
+        # explicit rate-limit handler a 429 raises straight through, and on the
+        # inbound path that means the SMS is dropped rather than retried --
+        # conversations_list is tier-2 (~20/min) and is hit on every refresh.
+        retry_handlers = [
+            AsyncConnectionErrorRetryHandler(max_retry_count=2),
+            AsyncRateLimitErrorRetryHandler(max_retry_count=2),
+        ]
+        self._web = web or AsyncWebClient(
+            token=config.slack_bot_token, retry_handlers=retry_handlers
+        )
+        # Injecting `socket` also avoids SocketModeClient's constructor, which
+        # builds an aiohttp.ClientSession and so needs a running event loop -
+        # that is what lets these tests construct the adapter synchronously.
         self._socket = socket or SocketModeClient(
             app_token=config.slack_app_token, web_client=self._web
         )
@@ -4864,7 +5019,7 @@ git commit -m "feat: run the startup channel access check on both platforms"
 
 - [ ] **Step 4: Create the Slack app and verify end to end**
 
-Create a Slack app with these bot scopes — `chat:write`, `groups:write`, `groups:read`, `files:read`, `reactions:write` — plus the app-level scope `connections:write`, and enable Socket Mode. Subscribe to bot events: `message.groups`, `channel_created`, `channel_rename`, `channel_archive`.
+Create a Slack app with these bot scopes — `chat:write`, `groups:write`, `groups:read`, `files:read`, `files:write`, `reactions:write` — plus the app-level scope `connections:write`, and enable Socket Mode. Subscribe to bot events: `message.groups`, `channel_created`, `channel_rename`, `channel_archive`.
 
 Run against a second SignalWire number with `CHAT_PLATFORM=slack`, then confirm:
 
@@ -4914,7 +5069,7 @@ After the Discord block:
 ```
 # --- Slack (required when CHAT_PLATFORM=slack) ---
 # Bot User OAuth Token. Scopes: chat:write, groups:write, groups:read,
-# files:read, reactions:write
+# files:read, files:write, reactions:write
 #SLACK_BOT_TOKEN=xoxb-your-bot-token
 # App-Level Token with connections:write, for Socket Mode
 #SLACK_APP_TOKEN=xapp-your-app-token
@@ -4982,6 +5137,15 @@ Split "Setup" into `### 1a. Discord` (existing content) and `### 1b. Slack`, the
 Update every `python sms_discord_bridge.py` to `python -m sms_bridge`.
 
 In "Known limits", replace any statement that attachments are sent as links with: attachments are forwarded as real MMS via a signed, ten-minute media URL, capped at `MAX_MMS_BYTES`; and note that Slack thread replies are never sent as SMS.
+
+Also document the number format explicitly, since `normalise_number` accepts any
+8-15 digit string and will happily dial one: **the bridge addresses numbers in
+E.164.** `!sms 4165550123` and `!sms 416-555-0123` are treated as NANP and get a
+`+1`; anything else is taken as an already-international number and gets a bare
+`+`. So `!sms 20260803 hi` dials `+20260803` (country code +20, Egypt) rather
+than rejecting a date. This is deliberate - it is what lets non-NANP numbers work
+without a country-code table - but it means a mistyped number can reach a real
+handset. Say so plainly in Known limits.
 
 Add a "Tests" section:
 ````markdown
