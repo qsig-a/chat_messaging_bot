@@ -5124,6 +5124,15 @@ Update every `python sms_discord_bridge.py` to `python -m sms_bridge`.
 
 In "Known limits", replace any statement that attachments are sent as links with: attachments are forwarded as real MMS via a signed, ten-minute media URL, capped at `MAX_MMS_BYTES`; and note that Slack thread replies are never sent as SMS.
 
+Also document the number format explicitly, since `normalise_number` accepts any
+8-15 digit string and will happily dial one: **the bridge addresses numbers in
+E.164.** `!sms 4165550123` and `!sms 416-555-0123` are treated as NANP and get a
+`+1`; anything else is taken as an already-international number and gets a bare
+`+`. So `!sms 20260803 hi` dials `+20260803` (country code +20, Egypt) rather
+than rejecting a date. This is deliberate - it is what lets non-NANP numbers work
+without a country-code table - but it means a mistyped number can reach a real
+handset. Say so plainly in Known limits.
+
 Add a "Tests" section:
 ````markdown
 ## Tests
