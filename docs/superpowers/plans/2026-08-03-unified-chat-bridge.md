@@ -2916,7 +2916,9 @@ def create_app(
         params = {k: str(v) for k, v in form.items()}
         if config.verify_signature:
             signature = request.headers.get("X-Twilio-Signature", "")
-            if not signalwire.check_signature(path, params, signature):
+            # SignalWire.check reads the header itself; `signature` is pulled out
+            # separately here only so explain_bad_signature can report on it.
+            if not signalwire.check(request, path, params):
                 log.warning(
                     "rejected request with bad signature on %s: %s",
                     path,
