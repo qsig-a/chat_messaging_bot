@@ -117,3 +117,34 @@ def test_defaults():
     assert cfg.command_prefix == "!sms"
     assert cfg.note_prefix == "//"
     assert cfg.max_mms_bytes == 1048576
+
+
+def test_non_numeric_int_raises_config_error_not_value_error():
+    """A bad port must fail like every other config error, not as a traceback."""
+    with pytest.raises(ConfigError) as exc:
+        load({**COMMON, **DISCORD, "BIND_PORT": "notanumber"})
+    assert "BIND_PORT" in str(exc.value)
+
+
+def test_non_numeric_guild_id_raises_config_error():
+    with pytest.raises(ConfigError) as exc:
+        load({**COMMON, **DISCORD, "DISCORD_GUILD_ID": "abc"})
+    assert "DISCORD_GUILD_ID" in str(exc.value)
+
+
+def test_config_error_exposes_message():
+    with pytest.raises(ConfigError) as exc:
+        load({**COMMON, "CHAT_PLATFORM": "irc"})
+    assert exc.value.message == str(exc.value)
+
+
+def test_http_space_url_is_normalised():
+    cfg = load({**COMMON, **DISCORD, "SIGNALWIRE_SPACE_URL": "http://a.signalwire.com/"})
+    assert cfg.sw_space == "a.signalwire.com"
+    assert cfg.sw_api_base.startswith("https://a.signalwire.com/api/laml/")
+
+
+def test_blank_optional_int_falls_back_to_default():
+    cfg = load({**COMMON, **DISCORD, "BIND_PORT": "", "MAX_MMS_BYTES": ""})
+    assert cfg.bind_port == 8080
+    assert cfg.max_mms_bytes == 1048576

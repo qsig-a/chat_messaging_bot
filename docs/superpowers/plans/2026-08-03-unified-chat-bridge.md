@@ -761,6 +761,10 @@ DEFAULT_MAX_MMS_BYTES = 1024 * 1024
 class ConfigError(Exception):
     """Configuration is unusable. __main__ turns this into a startup exit."""
 
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
 
 @dataclass(frozen=True)
 class Config:
@@ -805,6 +809,21 @@ def _flag(env: Mapping[str, str], name: str, default: str = "true") -> bool:
     return env.get(name, default).strip().lower() in ("1", "true", "yes")
 
 
+def _int(env: Mapping[str, str], name: str, default: int = 0) -> int:
+    """Parse an integer setting, or fail the way every other config error fails.
+
+    A bare ValueError here would escape the ConfigError contract and reach the
+    user as a traceback instead of a startup message naming the variable.
+    """
+    raw = (env.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        raise ConfigError(f"{name}={raw!r} is not a whole number") from None
+
+
 def load(env: Mapping[str, str] | None = None) -> Config:
     env = os.environ if env is None else env
     missing: list[str] = []
@@ -822,7 +841,12 @@ def load(env: Mapping[str, str] | None = None) -> Config:
             missing.append(f"{name} (required when CHAT_PLATFORM={owner})" if owner else name)
         return value
 
-    sw_space = need("SIGNALWIRE_SPACE_URL").replace("https://", "").strip("/")
+    sw_space = need("SIGNALWIRE_SPACE_URL")
+    for _scheme in ("https://", "http://"):
+        if sw_space.startswith(_scheme):
+            sw_space = sw_space[len(_scheme):]
+            break
+    sw_space = sw_space.strip("/")
     sw_project = need("SIGNALWIRE_PROJECT_ID")
     sw_token = need("SIGNALWIRE_API_TOKEN")
     sw_signing_key = need("SIGNALWIRE_SIGNING_KEY")
@@ -850,10 +874,10 @@ def load(env: Mapping[str, str] | None = None) -> Config:
     return Config(
         platform=platform,
         discord_token=discord_token,
-        discord_guild_id=int(discord_guild or 0),
-        discord_category_id=int(env.get("DISCORD_CATEGORY_ID") or 0),
-        discord_inbox_channel_id=int(discord_inbox or 0),
-        discord_secure_channel_id=int(env.get("DISCORD_SECURE_CHANNEL_ID") or 0),
+        discord_guild_id=_int(env, "DISCORD_GUILD_ID"),
+        discord_category_id=_int(env, "DISCORD_CATEGORY_ID"),
+        discord_inbox_channel_id=_int(env, "DISCORD_INBOX_CHANNEL_ID"),
+        discord_secure_channel_id=_int(env, "DISCORD_SECURE_CHANNEL_ID"),
         slack_bot_token=slack_bot,
         slack_app_token=slack_app,
         slack_inbox_channel_id=slack_inbox,
@@ -866,7 +890,7 @@ def load(env: Mapping[str, str] | None = None) -> Config:
         sw_number=sw_number,
         public_base_url=public_base_url,
         bind_host=env.get("BIND_HOST", "0.0.0.0"),
-        bind_port=int(env.get("BIND_PORT") or 8080),
+        bind_port=_int(env, "BIND_PORT", 8080),
         verify_signature=_flag(env, "VERIFY_SIGNATURE"),
         redact_codes=_flag(env, "REDACT_CODES"),
         db_path=env.get("DB_PATH", "bridge.sqlite3"),
@@ -874,7 +898,7 @@ def load(env: Mapping[str, str] | None = None) -> Config:
         command_prefix=env.get("COMMAND_PREFIX", "!sms"),
         note_prefix=env.get("NOTE_PREFIX", "//"),
         media_signing_key=media_key,
-        max_mms_bytes=int(env.get("MAX_MMS_BYTES") or DEFAULT_MAX_MMS_BYTES),
+        max_mms_bytes=_int(env, "MAX_MMS_BYTES", DEFAULT_MAX_MMS_BYTES),
     )
 ```
 
