@@ -73,18 +73,35 @@ async def run(config: Config) -> None:
         except NotImplementedError:  # e.g. Windows
             pass
 
+    tasks: list[asyncio.Task] = []
+
     log.info("platform=%s", config.platform)
-    asyncio.create_task(server.serve())
+    tasks.append(asyncio.create_task(server.serve()))
     log.info(
         "webhook listening on %s:%s (public: %s)",
         config.bind_host,
         config.bind_port,
         config.public_base_url,
     )
-    asyncio.create_task(delivery.run_worker(queue))
+    tasks.append(asyncio.create_task(delivery.run_worker(queue)))
     if config.heartbeat_url:
-        asyncio.create_task(heartbeat_loop(http, config.heartbeat_url))
-    asyncio.create_task(adapter.start(delivery.handle_outbound))
+        tasks.append(asyncio.create_task(heartbeat_loop(http, config.heartbeat_url)))
+
+    async def start_chat() -> None:
+        await adapter.start(delivery.handle_outbound)
+
+    async def check_when_ready() -> None:
+        # adapter.start blocks for the lifetime of the gateway connection, so the
+        # access check waits on readiness rather than on start() returning.
+        for _ in range(60):
+            if adapter.is_ready():
+                await adapter.check_access()
+                return
+            await asyncio.sleep(1)
+        log.warning("adapter never became ready; skipping the startup access check")
+
+    tasks.append(asyncio.create_task(start_chat()))
+    tasks.append(asyncio.create_task(check_when_ready()))
 
     await stop.wait()
     log.info("shutdown signal received, closing")

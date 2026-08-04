@@ -7,7 +7,7 @@ channel. Every branch of the decision table is covered.
 import httpx
 import pytest
 
-from sms_bridge.chat.base import Reaction, SecureResult
+from sms_bridge.chat.base import Attachment, Reaction, SecureResult
 from sms_bridge.config import load
 from sms_bridge.delivery import Delivery, InboundSms
 from sms_bridge.signalwire import SignalWire
@@ -366,6 +366,20 @@ async def test_partial_multi_chunk_failure_does_not_later_flip_to_ok():
 
     await delivery.update_status("SM-part1", "delivered", "")
     assert all(r is not Reaction.OK for _, r in adapter.reactions)
+
+
+async def test_attachments_are_not_dropped_silently():
+    """Until MMS is wired, the user must still learn nothing was sent."""
+    delivery, adapter, store = build()
+    await delivery.handle_outbound(
+        adapter.make_outbound(
+            "", topic=f"sms:{CONTACT}",
+            attachments=[Attachment(file_id="F1", filename="a.png", size=10)],
+        )
+    )
+    assert store.lookup_outbound("SM-sent") is None
+    assert adapter.replies, "the user is told the attachment was not sent"
+    assert "not sent" in adapter.replies[0][1]
 
 
 async def test_empty_note_prefix_does_not_swallow_every_message():

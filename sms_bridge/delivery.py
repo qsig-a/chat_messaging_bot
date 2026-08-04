@@ -163,6 +163,15 @@ class Delivery:
         body = self._adapter.strip_markup(raw)
         media_urls = await self._media_urls_for(msg)
 
+        if msg.attachments and not media_urls:
+            # Media support arrives with the signed media endpoint. Until then say
+            # so rather than dropping attachments in silence.
+            await self._adapter.reply(
+                msg.message,
+                f"{len(msg.attachments)} attachment(s) were not sent - "
+                "MMS support is not wired up yet.",
+            )
+
         if not body and not media_urls:
             return
 
