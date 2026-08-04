@@ -12,6 +12,7 @@ import uvicorn
 
 from .config import Config, ConfigError, load
 from .delivery import Delivery
+from .media import MediaTokens
 from .server import create_app
 from .signalwire import SignalWire
 from .store import Store
@@ -52,9 +53,10 @@ async def run(config: Config) -> None:
     signalwire = SignalWire(config, http)
     adapter = build_adapter(config)
     queue: asyncio.Queue = asyncio.Queue()
-    delivery = Delivery(config, adapter, store, signalwire)
+    media = MediaTokens(config.media_signing_key)
+    delivery = Delivery(config, adapter, store, signalwire, media)
 
-    app = create_app(config, signalwire, store, delivery, queue, adapter)
+    app = create_app(config, signalwire, store, delivery, queue, adapter, media)
     server = uvicorn.Server(
         uvicorn.Config(
             app,

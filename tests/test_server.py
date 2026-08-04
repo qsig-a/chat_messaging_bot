@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from sms_bridge.config import load
 from sms_bridge.delivery import Delivery
+from sms_bridge.media import MediaTokens
 from sms_bridge.server import create_app
 from sms_bridge.signalwire import SignalWire
 from sms_bridge.store import Store
@@ -49,7 +50,8 @@ def app_bits():
     adapter = FakeAdapter()
     queue: asyncio.Queue = asyncio.Queue()
     delivery = Delivery(cfg, adapter, store, sw)
-    app = create_app(cfg, sw, store, delivery, queue, adapter)
+    media = MediaTokens(cfg.media_signing_key)
+    app = create_app(cfg, sw, store, delivery, queue, adapter, media)
     return app, queue, store, adapter
 
 
@@ -114,7 +116,8 @@ def test_signature_check_can_be_disabled(app_bits):
     store = Store(":memory:")
     queue: asyncio.Queue = asyncio.Queue()
     adapter = FakeAdapter()
-    app = create_app(cfg, sw, store, Delivery(cfg, adapter, store, sw), queue, adapter)
+    media = MediaTokens(cfg.media_signing_key)
+    app = create_app(cfg, sw, store, Delivery(cfg, adapter, store, sw), queue, adapter, media)
     with TestClient(app) as client:
         r = client.post("/sms/inbound", data={"From": "+1", "MessageSid": "SM4"})
     assert r.status_code == 200
@@ -146,3 +149,62 @@ def test_docs_are_disabled(app_bits):
     with TestClient(app) as client:
         assert client.get("/docs").status_code == 404
         assert client.get("/openapi.json").status_code == 404
+
+
+def test_media_endpoint_serves_a_valid_token():
+    cfg = load(ENV)
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(201, json={"sid": "S"}))
+    )
+    sw = SignalWire(cfg, http)
+    store = Store(":memory:")
+    adapter = FakeAdapter()
+    adapter.attachments["F1"] = (b"\x89PNG-data", "image/png")
+    media = MediaTokens(cfg.media_signing_key)
+    queue: asyncio.Queue = asyncio.Queue()
+    app = create_app(cfg, sw, store, Delivery(cfg, adapter, store, sw), queue, adapter, media)
+
+    with TestClient(app) as client:
+        r = client.get(f"/media/{media.mint('F1')}")
+
+    assert r.status_code == 200
+    assert r.content == b"\x89PNG-data"
+    assert r.headers["content-type"].startswith("image/png")
+    assert r.headers["cache-control"] == "no-store"
+
+
+def test_media_endpoint_rejects_a_forged_token():
+    cfg = load(ENV)
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(201, json={"sid": "S"}))
+    )
+    sw = SignalWire(cfg, http)
+    store = Store(":memory:")
+    adapter = FakeAdapter()
+    adapter.attachments["F1"] = (b"data", "image/png")
+    queue: asyncio.Queue = asyncio.Queue()
+    app = create_app(
+        cfg, sw, store, Delivery(cfg, adapter, store, sw), queue, adapter,
+        MediaTokens(cfg.media_signing_key),
+    )
+    forged = MediaTokens(b"attacker key attacker key attac").mint("F1")
+
+    with TestClient(app) as client:
+        assert client.get(f"/media/{forged}").status_code == 404
+        assert client.get("/media/garbage").status_code == 404
+
+
+def test_media_endpoint_404s_for_an_unknown_file():
+    cfg = load(ENV)
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(201, json={"sid": "S"}))
+    )
+    sw = SignalWire(cfg, http)
+    store = Store(":memory:")
+    adapter = FakeAdapter()  # no attachments registered
+    media = MediaTokens(cfg.media_signing_key)
+    queue: asyncio.Queue = asyncio.Queue()
+    app = create_app(cfg, sw, store, Delivery(cfg, adapter, store, sw), queue, adapter, media)
+
+    with TestClient(app) as client:
+        assert client.get(f"/media/{media.mint('missing')}").status_code == 404

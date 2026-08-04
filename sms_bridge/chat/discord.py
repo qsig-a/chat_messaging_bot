@@ -13,6 +13,7 @@ import re
 from typing import Sequence
 
 import discord
+import httpx
 
 from ..config import Config
 from ..routing import channel_name_for, number_from_topic, topic_for
@@ -130,7 +131,7 @@ class DiscordAdapter:
             text=message.content or "",
             channel_topic=getattr(message.channel, "topic", None),
             attachments=tuple(
-                Attachment(file_id=str(a.id), filename=a.filename, size=a.size)
+                Attachment(file_id=a.url, filename=a.filename, size=a.size)
                 for a in message.attachments
             ),
         )
@@ -230,7 +231,16 @@ class DiscordAdapter:
     # -- misc ------------------------------------------------------------
 
     async def fetch_attachment(self, file_id: str) -> tuple[bytes, str]:
-        raise NotImplementedError("implemented in Task 13")
+        """file_id is the CDN URL captured when the message arrived.
+
+        Those URLs are signed and expire in roughly 24 hours, which is far longer
+        than a token's 10-minute life, so no refresh is needed.
+        """
+        async with httpx.AsyncClient() as http:
+            r = await http.get(file_id, follow_redirects=True, timeout=20)
+            r.raise_for_status()
+        ctype = r.headers.get("content-type", "application/octet-stream").split(";")[0]
+        return r.content, ctype
 
     async def notify_inbox(self, text: str) -> None:
         """Best-effort operator notice. Never raises: callers use it on error paths."""

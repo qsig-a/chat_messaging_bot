@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request, Response
 
 from .config import Config
 from .delivery import Delivery, InboundSms
+from .media import MediaTokens
 from .signalwire import SignalWire
 from .store import Store
 
@@ -26,6 +27,7 @@ def create_app(
     delivery: Delivery,
     queue: asyncio.Queue,
     adapter,
+    media: MediaTokens,
 ) -> FastAPI:
     api = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -94,5 +96,27 @@ def create_app(
             "queued": queue.qsize(),
             "latency_ms": adapter.latency_ms(),
         }
+
+    @api.get("/media/{token}")
+    async def outbound_media(token: str) -> Response:
+        """Serve a chat attachment to SignalWire for MMS.
+
+        Guarded solely by the token's HMAC and expiry. Every failure returns 404
+        so the route never discloses which file ids exist.
+        """
+        file_id = media.verify(token)
+        if file_id is None:
+            log.warning("rejected media request with an invalid or expired token")
+            return Response(status_code=404)
+        try:
+            data, content_type = await adapter.fetch_attachment(file_id)
+        except Exception:  # noqa: BLE001
+            log.exception("could not fetch attachment %s", file_id)
+            return Response(status_code=404)
+        return Response(
+            content=data,
+            media_type=content_type,
+            headers={"Cache-Control": "no-store"},
+        )
 
     return api

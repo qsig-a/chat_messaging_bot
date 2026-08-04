@@ -75,6 +75,8 @@ class FakeAdapter:
 
     # -- misc ------------------------------------------------------------
     async def fetch_attachment(self, file_id: str) -> tuple[bytes, str]:
+        if file_id not in self.attachments:
+            raise KeyError(file_id)
         return self.attachments[file_id]
 
     async def notify_inbox(self, text: str) -> None:
