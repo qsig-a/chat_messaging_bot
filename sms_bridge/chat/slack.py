@@ -12,12 +12,15 @@ workspace-visible SMS threads would be the wrong default.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Sequence
 
 import httpx
 from slack_sdk.errors import SlackApiError
+from slack_sdk.http_retry.builtin_async_handlers import (
+    AsyncConnectionErrorRetryHandler,
+    AsyncRateLimitErrorRetryHandler,
+)
 from slack_sdk.socket_mode.aiohttp import SocketModeClient
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
@@ -76,7 +79,17 @@ class SlackAdapter:
 
     def __init__(self, config: Config) -> None:
         self._c = config
-        self._web = AsyncWebClient(token=config.slack_bot_token)
+        # The SDK's default handlers cover connection errors only. Without an
+        # explicit rate-limit handler a 429 raises straight through, and on the
+        # inbound path that means the SMS is dropped rather than retried --
+        # conversations_list is tier-2 (~20/min) and is hit on every refresh.
+        retry_handlers = [
+            AsyncConnectionErrorRetryHandler(max_retry_count=2),
+            AsyncRateLimitErrorRetryHandler(max_retry_count=2),
+        ]
+        self._web = AsyncWebClient(
+            token=config.slack_bot_token, retry_handlers=retry_handlers
+        )
         self._socket = SocketModeClient(
             app_token=config.slack_app_token, web_client=self._web
         )
@@ -219,8 +232,14 @@ class SlackAdapter:
                 await self._web.files_upload_v2(
                     channel=channel.id, file=extra.data, filename=extra.filename
                 )
-            ts = uploaded.get("file", {}).get("shares", {})
-            return MessageRef(channel_id=channel.id, message_id=_first_share_ts(ts) or "")
+            ts = _message_ts_from_upload(uploaded)
+            if not ts:
+                log.debug(
+                    "no message ts for uploaded file in %s; the returned "
+                    "MessageRef cannot be reacted to",
+                    channel.id,
+                )
+            return MessageRef(channel_id=channel.id, message_id=ts)
 
         sent = await self._web.chat_postMessage(channel=channel.id, text=text)
         return MessageRef(channel_id=channel.id, message_id=sent["ts"])
@@ -324,9 +343,21 @@ class SlackAdapter:
         return strip_markup(text)
 
 
-def _first_share_ts(shares: dict) -> str | None:
-    for scope in ("public", "private"):
-        for entries in (shares.get(scope) or {}).values():
-            if entries:
-                return entries[0].get("ts")
-    return None
+def _message_ts_from_upload(uploaded) -> str:
+    """Best-effort message ts for an uploaded file.
+
+    files_upload_v2 completes through files.completeUploadExternal, whose
+    response carries no `shares` block - that only comes back from
+    files.info, which v2 no longer calls. So there is often no message ts
+    to be had, and callers must treat an empty id as "cannot be reacted to"
+    rather than as a valid reference.
+    """
+    for shares in (
+        (uploaded.get("file") or {}).get("shares"),
+        *[(f or {}).get("shares") for f in (uploaded.get("files") or [])],
+    ):
+        for scope in ("public", "private"):
+            for entries in ((shares or {}).get(scope) or {}).values():
+                if entries:
+                    return entries[0].get("ts") or ""
+    return ""
