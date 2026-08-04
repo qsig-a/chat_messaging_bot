@@ -65,3 +65,45 @@ def test_file_ids_containing_colons_survive():
     """Slack ids are plain, but nothing should depend on that."""
     tokens = MediaTokens(KEY)
     assert tokens.verify(tokens.mint("a:b:c")) == "a:b:c"
+
+
+def _sign(key: bytes, payload: bytes) -> str:
+    """Mint a structurally valid token around an arbitrary payload.
+
+    Needed to reach verify()'s payload-parsing branch: an unsigned or
+    tampered token is rejected at the signature check long before it.
+    """
+    import hashlib
+    import hmac
+
+    encoded = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+    signature = (
+        base64.urlsafe_b64encode(
+            hmac.new(key, encoded.encode(), hashlib.sha256).digest()
+        )
+        .decode()
+        .rstrip("=")
+    )
+    return f"{encoded}.{signature}"
+
+
+def test_validly_signed_but_non_utf8_payload_returns_none():
+    """Must not raise UnicodeDecodeError - the endpoint turns None into 404."""
+    assert MediaTokens(KEY).verify(_sign(KEY, b"\xff\xfe:9999999999")) is None
+
+
+def test_validly_signed_but_non_numeric_expiry_returns_none():
+    """Must not raise ValueError."""
+    assert MediaTokens(KEY).verify(_sign(KEY, b"F1:notanumber")) is None
+
+
+def test_validly_signed_payload_with_no_colon_returns_none():
+    assert MediaTokens(KEY).verify(_sign(KEY, b"nocolonhere")) is None
+
+
+def test_validly_signed_payload_with_empty_file_id_returns_none():
+    assert MediaTokens(KEY).verify(_sign(KEY, b":9999999999")) is None
+
+
+def test_validly_signed_empty_payload_returns_none():
+    assert MediaTokens(KEY).verify(_sign(KEY, b"")) is None
