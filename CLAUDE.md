@@ -234,8 +234,17 @@ raises `ConfigError` like everything else instead of escaping as a traceback.
 
 The Discord bot needs the **Message Content** privileged intent. The Slack app needs
 Socket Mode, an app-level token with `connections:write`, the bot scopes `chat:write`,
-`groups:write`, `groups:read`, `files:read`, `files:write`, `reactions:write`, and the
-bot events `message.groups`, `channel_created`, `channel_rename`, `channel_archive`.
+`groups:write`, `groups:read`, `groups:history`, `channels:read`, `files:read`,
+`files:write`, `reactions:write`, and the bot events `message.groups`,
+`channel_created`, `channel_rename`, `channel_archive`.
+
+Two of those scopes are non-obvious and both fail as "inbound works, outbound is
+silently dead", because the webhook server survives a broken chat connection:
+`groups:history` is what makes Slack deliver `message.groups` at all, and
+`channels:read` is required by `conversations.list` alongside `groups:read` — without
+it `ChannelIndex.refresh()` raises inside `start()`, so `connect()` is never reached
+and no events ever arrive. Scope changes need an app reinstall, which mints a new bot
+token.
 
 ## Tests
 
