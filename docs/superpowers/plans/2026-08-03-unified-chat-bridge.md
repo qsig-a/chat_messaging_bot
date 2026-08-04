@@ -4551,7 +4551,20 @@ In `sms_bridge/chat/slack.py`, change the constructor:
 ```python
     def __init__(self, config: Config, web=None, socket=None) -> None:
         self._c = config
-        self._web = web or AsyncWebClient(token=config.slack_bot_token)
+        # The SDK's default handlers cover connection errors only. Without an
+        # explicit rate-limit handler a 429 raises straight through, and on the
+        # inbound path that means the SMS is dropped rather than retried --
+        # conversations_list is tier-2 (~20/min) and is hit on every refresh.
+        retry_handlers = [
+            AsyncConnectionErrorRetryHandler(max_retry_count=2),
+            AsyncRateLimitErrorRetryHandler(max_retry_count=2),
+        ]
+        self._web = web or AsyncWebClient(
+            token=config.slack_bot_token, retry_handlers=retry_handlers
+        )
+        # Injecting `socket` also avoids SocketModeClient's constructor, which
+        # builds an aiohttp.ClientSession and so needs a running event loop -
+        # that is what lets these tests construct the adapter synchronously.
         self._socket = socket or SocketModeClient(
             app_token=config.slack_app_token, web_client=self._web
         )
