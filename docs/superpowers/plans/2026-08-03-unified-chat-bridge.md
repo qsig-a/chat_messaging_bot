@@ -1050,6 +1050,11 @@ class Store:
         ).fetchone()
         return (row[0], row[1]) if row else None
 
+    def forget_outbound(self, sid: str) -> None:
+        """Drop a recorded SID so a late status callback cannot revive it."""
+        self._db.execute("DELETE FROM outbound WHERE sid = ?", (sid,))
+        self._db.commit()
+
     def prune(self, days: int = 30) -> None:
         cutoff = int(time.time()) - days * 86400
         self._db.execute("DELETE FROM seen WHERE ts < ?", (cutoff,))
@@ -1372,7 +1377,16 @@ class SignalWire:
             return None
         if len(r.content) > MAX_UPLOAD_BYTES:
             return None
-        ctype = r.headers.get("content-type", "application/octet-stream").split(";")[0]
+        # Normalise here, once. HTTP media types are case-insensitive (RFC 9110),
+        # and delivery.py compares this against "text/plain" to decide whether a
+        # part is an MMS caption. A `Text/Plain` header skipping that fold meant a
+        # passcode caption bypassed redaction and uploaded to the contact channel.
+        ctype = (
+            r.headers.get("content-type", "application/octet-stream")
+            .split(";")[0]
+            .strip()
+            .lower()
+        )
         return r.content, f"mms.{_EXTENSIONS.get(ctype, 'bin')}", ctype
 
     def check_signature(self, path: str, params: dict[str, str], signature: str) -> bool:
@@ -1688,7 +1702,19 @@ class FakeAdapter:
 
     # -- test helpers ----------------------------------------------------
     def posted_text(self) -> str:
-        return "\n".join(text for _, text, _ in self.posts)
+        """Everything a contact channel received - text, filenames, and file bytes.
+
+        Passcode assertions depend on this seeing attachments too: a code that
+        leaks as an uploaded file is still a leak, and text-only inspection hid
+        exactly that bug.
+        """
+        parts = []
+        for _, text, files in self.posts:
+            parts.append(text)
+            for f in files:
+                parts.append(f.filename)
+                parts.append(f.data.decode("utf-8", "replace"))
+        return "\n".join(parts)
 
     def make_outbound(self, text: str, topic: str | None, attachments=()) -> OutboundMessage:
         return OutboundMessage(
@@ -2198,7 +2224,7 @@ class Delivery:
             return
 
         channel = await self._channel_for(sms.sender)
-        content = body or NO_BODY_NOTICE
+        content = body.strip() or NO_BODY_NOTICE
         limit = self._adapter.max_post_chars
         pending = files
         for piece in [content[i:i + limit] for i in range(0, len(content), limit)]:
@@ -2236,10 +2262,12 @@ class Delivery:
     async def handle_outbound(self, msg: OutboundMessage) -> None:
         text = msg.text or ""
 
-        if text.startswith(self._c.note_prefix):
+        # Guard the empty prefix: "".startswith("") is True, so NOTE_PREFIX= in a
+        # .env would silently turn every outbound message into an internal note.
+        if self._c.note_prefix and text.startswith(self._c.note_prefix):
             return  # internal note: visible in chat, never sent
 
-        if text.startswith(self._c.command_prefix):
+        if self._c.command_prefix and text.startswith(self._c.command_prefix):
             await self._handle_command(msg, text)
             return
 
@@ -2280,17 +2308,23 @@ class Delivery:
             log.info("outbound to %s is %d segments", to, segments)
 
         await self._adapter.react(msg.message, Reaction.PENDING)
+        sent_sids: list[str] = []
         try:
             pieces = chunk(body) if body else [""]
             for index, piece in enumerate(pieces):
                 sid = await self._sw.send_sms(
                     to, piece, media_urls if index == 0 else ()
                 )
+                sent_sids.append(sid)
                 self._store.remember_outbound(
                     sid, msg.message.channel_id, msg.message.message_id
                 )
         except Exception as exc:  # noqa: BLE001
             log.exception("send failed")
+            # Forget the chunks that did go out: a late `delivered` callback for
+            # one of them would otherwise put OK on a message just marked FAIL.
+            for sid in sent_sids:
+                self._store.forget_outbound(sid)
             await self._adapter.unreact(msg.message, Reaction.PENDING)
             await self._adapter.react(msg.message, Reaction.FAIL)
             await self._adapter.reply(msg.message, f"Send failed: `{exc}`")
