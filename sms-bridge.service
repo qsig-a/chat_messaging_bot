@@ -1,5 +1,5 @@
 [Unit]
-Description=SignalWire <-> Discord SMS bridge
+Description=SignalWire <-> Slack/Discord SMS bridge
 After=network-online.target
 Wants=network-online.target
 
