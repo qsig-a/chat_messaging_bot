@@ -221,3 +221,7 @@ __marimo__/
 
 # Git worktrees for isolated feature work
 .worktrees/
+
+# Default DB_PATH creates this when the bridge runs from the repo root
+bridge.sqlite3
+bridge.sqlite3-journal
