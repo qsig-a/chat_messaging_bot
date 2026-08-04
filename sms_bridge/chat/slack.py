@@ -77,7 +77,7 @@ class SlackAdapter:
     name = "slack"
     max_post_chars = 3800  # Slack's practical text limit is around 4000
 
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, web=None, socket=None) -> None:
         self._c = config
         # The SDK's default handlers cover connection errors only. Without an
         # explicit rate-limit handler a 429 raises straight through, and on the
@@ -87,10 +87,13 @@ class SlackAdapter:
             AsyncConnectionErrorRetryHandler(max_retry_count=2),
             AsyncRateLimitErrorRetryHandler(max_retry_count=2),
         ]
-        self._web = AsyncWebClient(
+        self._web = web or AsyncWebClient(
             token=config.slack_bot_token, retry_handlers=retry_handlers
         )
-        self._socket = SocketModeClient(
+        # Injecting `socket` also avoids SocketModeClient's constructor, which
+        # builds an aiohttp.ClientSession and so needs a running event loop -
+        # that is what lets these tests construct the adapter synchronously.
+        self._socket = socket or SocketModeClient(
             app_token=config.slack_app_token, web_client=self._web
         )
         self._index = ChannelIndex(self._list_conversations)
