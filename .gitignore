@@ -149,6 +149,9 @@ activemq-data/
 
 # Environments
 .env
+# Per-platform stack envs (.env.slack, .env.discord) hold live credentials.
+.env.*
+!.env.example
 .envrc
 .venv
 env/
