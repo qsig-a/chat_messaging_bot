@@ -56,6 +56,37 @@ class Delivery:
         self._store = store
         self._sw = signalwire
         self._media = media
+        self._reactions_broken = False
+
+    # -- reactions -------------------------------------------------------
+
+    async def _react(self, ref: MessageRef, reaction: Reaction) -> None:
+        """Set a reaction, or carry on without one.
+
+        Reactions are a status display, and they run *before* the send. Letting
+        a permissions failure propagate would abort the SMS itself - a bridge
+        that cannot decorate a message would stop carrying it. The operator
+        still hears about it, once, rather than once per message.
+        """
+        await self._reaction_call(self._adapter.react, ref, reaction)
+
+    async def _unreact(self, ref: MessageRef, reaction: Reaction) -> None:
+        await self._reaction_call(self._adapter.unreact, ref, reaction)
+
+    async def _reaction_call(self, method, ref: MessageRef, reaction: Reaction) -> None:
+        try:
+            await method(ref, reaction)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not update the %s reaction: %s", reaction.value, exc)
+            if not self._reactions_broken:
+                self._reactions_broken = True
+                await self._adapter.notify_inbox(
+                    "Cannot add reactions, so delivery status will not show on "
+                    "messages. Messages are still being sent and received. Grant "
+                    "the bot permission to react - Slack: the `reactions:write` "
+                    "scope, then reinstall the app; Discord: the Add Reactions "
+                    f"permission. Slack/Discord reported: `{exc}`"
+                )
 
     # -- inbound ---------------------------------------------------------
 
@@ -170,7 +201,7 @@ class Delivery:
         if segments > 1:
             log.info("outbound to %s is %d segments", to, segments)
 
-        await self._adapter.react(msg.message, Reaction.PENDING)
+        await self._react(msg.message, Reaction.PENDING)
         sent_sids: list[str] = []
         try:
             pieces = chunk(body) if body else [""]
@@ -188,8 +219,8 @@ class Delivery:
             # one of them would otherwise put OK on a message we just marked FAIL.
             for sid in sent_sids:
                 self._store.forget_outbound(sid)
-            await self._adapter.unreact(msg.message, Reaction.PENDING)
-            await self._adapter.react(msg.message, Reaction.FAIL)
+            await self._unreact(msg.message, Reaction.PENDING)
+            await self._react(msg.message, Reaction.FAIL)
             await self._adapter.reply(msg.message, f"Send failed: `{exc}`")
 
     async def _media_urls_for(self, msg: OutboundMessage) -> list[str]:
@@ -225,11 +256,11 @@ class Delivery:
         message = MessageRef(channel_id=channel_id, message_id=message_id)
 
         if status == "delivered":
-            await self._adapter.unreact(message, Reaction.PENDING)
-            await self._adapter.react(message, Reaction.OK)
+            await self._unreact(message, Reaction.PENDING)
+            await self._react(message, Reaction.OK)
         elif status in ("failed", "undelivered"):
-            await self._adapter.unreact(message, Reaction.PENDING)
-            await self._adapter.react(message, Reaction.FAIL)
+            await self._unreact(message, Reaction.PENDING)
+            await self._react(message, Reaction.FAIL)
             detail = f" (error {error_code})" if error_code else ""
             await self._adapter.reply(message, f"Carrier reported `{status}`{detail}")
 

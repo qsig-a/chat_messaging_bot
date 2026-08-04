@@ -88,22 +88,41 @@ Do section 1a or 1b, not both.
 2. **Socket Mode** → toggle **Enable Socket Mode** on. It offers to mint an
    app-level token: create one with the `connections:write` scope and copy it —
    this is `SLACK_APP_TOKEN` and starts `xapp-`.
-3. **OAuth & Permissions** → *Bot Token Scopes*, add all six:
+3. **OAuth & Permissions** → *Bot Token Scopes*, add all eight:
 
    | Scope | Why |
    | --- | --- |
    | `chat:write` | post inbound texts and operator notices |
    | `groups:write` | create the private contact channels |
    | `groups:read` | read their topics, and find them again after a restart |
+   | `groups:history` | **receive** messages you type in a contact channel |
+   | `channels:read` | `conversations.list` needs it even to list private channels |
    | `files:read` | download an attachment to send it as MMS |
-   | `reactions:write` | the ⏳ → ✅ / ❌ delivery reactions |
    | `files:write` | upload inbound MMS media into the channel |
+   | `reactions:write` | the ⏳ → ✅ / ❌ delivery reactions |
+
+   The two easy to miss are `groups:history` — without it Slack never sends the
+   message events, so outbound is silently dead while inbound works fine — and
+   `channels:read`, which `conversations.list` demands alongside `groups:read`
+   regardless of the channel types you ask for. Missing that one makes the
+   startup channel-index refresh throw, and the Socket Mode connection is never
+   established.
 
 4. **Event Subscriptions** → enable events, then under *Subscribe to bot
    events* add: `message.groups`, `channel_created`, `channel_rename`,
    `channel_archive`. With Socket Mode on there is no Request URL to verify.
+   Adding the scopes is not enough on its own — without the `message.groups`
+   subscription nothing you type is ever delivered to the bridge.
+
+   `!sms` only works in channels the app receives messages from, which means
+   private ones. To use it from a public channel, also subscribe
+   `message.channels` and add the `channels:history` scope.
 5. **Install App** → install to the workspace, then copy the *Bot User OAuth
    Token* (`xoxb-…`) into `SLACK_BOT_TOKEN`.
+
+   **Any scope added later needs a reinstall**, and the bot token changes when
+   you reinstall — put the new one in your config or the app keeps running with
+   the old permissions.
 6. Create an inbox channel and, optionally, a locked-down channel for
    passcodes, and **`/invite` the bot into both** — Slack will not let it post
    into a channel it is not a member of. To get a channel ID: open the channel,

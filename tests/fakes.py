@@ -21,9 +21,14 @@ class FakeAdapter:
         self,
         secure_result: SecureResult = SecureResult.NOT_CONFIGURED,
         secure_hint: str = "",
+        react_error: Exception | None = None,
     ) -> None:
         self.secure_result = secure_result
         self.secure_hint = secure_hint
+        # Stands in for a platform refusing to add reactions - Slack's
+        # missing_scope on reactions:write, Discord's Forbidden without
+        # "Add Reactions". Both raise from react()/unreact().
+        self.react_error = react_error
 
         self.channels: dict[str, ChannelRef] = {}
         self.created: list[str] = []
@@ -62,9 +67,13 @@ class FakeAdapter:
         self.replies.append((ref, text))
 
     async def react(self, ref: MessageRef, reaction: Reaction) -> None:
+        if self.react_error is not None:
+            raise self.react_error
         self.reactions.append((ref, reaction))
 
     async def unreact(self, ref: MessageRef, reaction: Reaction) -> None:
+        if self.react_error is not None:
+            raise self.react_error
         self.unreactions.append((ref, reaction))
 
     # -- secure channel --------------------------------------------------

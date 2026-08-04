@@ -433,6 +433,60 @@ async def test_intermediate_status_does_nothing():
 
 
 # --------------------------------------------------------------------------
+# Reactions are decoration, not a prerequisite
+#
+# A bot without permission to react (Slack's reactions:write, Discord's "Add
+# Reactions") must still carry SMS in both directions. Reactions run before
+# the send, so treating their failure as fatal silently downgrades a working
+# bridge into one that only receives.
+# --------------------------------------------------------------------------
+
+async def test_a_failing_reaction_does_not_block_the_send():
+    adapter = FakeAdapter(react_error=RuntimeError("missing_scope: reactions:write"))
+    delivery, adapter, store = build(adapter=adapter)
+
+    await delivery.handle_outbound(adapter.make_outbound("hi", topic=f"sms:{CONTACT}"))
+
+    assert store.lookup_outbound("SM-sent") == ("chan-1", "m1")
+
+
+async def test_a_failing_reaction_is_reported_to_the_inbox_once():
+    adapter = FakeAdapter(react_error=RuntimeError("missing_scope: reactions:write"))
+    delivery, adapter, _ = build(adapter=adapter)
+
+    for _ in range(3):
+        await delivery.handle_outbound(
+            adapter.make_outbound("hi", topic=f"sms:{CONTACT}")
+        )
+
+    notices = [t for t in adapter.inbox if "react" in t.lower()]
+    assert len(notices) == 1, adapter.inbox
+
+
+async def test_send_failure_still_replies_when_reactions_fail():
+    """The failure path reacts before it replies; the reply is the part that matters."""
+    def boom(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"message": "nope"})
+
+    adapter = FakeAdapter(react_error=RuntimeError("missing_scope: reactions:write"))
+    delivery, adapter, _ = build(adapter=adapter, send_handler=boom)
+
+    await delivery.handle_outbound(adapter.make_outbound("hi", topic=f"sms:{CONTACT}"))
+
+    assert any("Send failed" in text for _, text in adapter.replies)
+
+
+async def test_status_update_still_replies_when_reactions_fail():
+    adapter = FakeAdapter(react_error=RuntimeError("missing_scope: reactions:write"))
+    delivery, adapter, store = build(adapter=adapter)
+    store.remember_outbound("SM-y", "chan-1", "m1")
+
+    await delivery.update_status("SM-y", "failed", "30008")
+
+    assert adapter.replies and "30008" in adapter.replies[0][1]
+
+
+# --------------------------------------------------------------------------
 # Outbound media
 # --------------------------------------------------------------------------
 
