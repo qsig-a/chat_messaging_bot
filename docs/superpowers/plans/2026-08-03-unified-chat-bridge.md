@@ -1339,13 +1339,19 @@ class SignalWire:
     async def send_sms(
         self, to: str, body: str, media_urls: Sequence[str] = ()
     ) -> str:
-        data: list[tuple[str, str]] = [
-            ("From", self._c.sw_number),
-            ("To", to),
-            ("Body", body),
-            ("StatusCallback", f"{self._c.public_base_url}/sms/status"),
-        ]
-        data.extend(("MediaUrl", url) for url in media_urls)
+        # httpx's data= only builds an async-compatible body for a Mapping. A list
+        # of (key, value) pairs is treated as raw content= and produces a sync-only
+        # iterator stream, so AsyncClient raises "Attempted to send an sync request
+        # with an AsyncClient instance" on EVERY send, media or not. A dict with a
+        # list value is the supported way to repeat a key in one urlencoded body.
+        data: dict[str, str | list[str]] = {
+            "From": self._c.sw_number,
+            "To": to,
+            "Body": body,
+            "StatusCallback": f"{self._c.public_base_url}/sms/status",
+        }
+        if media_urls:
+            data["MediaUrl"] = list(media_urls)
         r = await self._http.post(
             f"{self._c.sw_api_base}/Messages.json",
             data=data,
