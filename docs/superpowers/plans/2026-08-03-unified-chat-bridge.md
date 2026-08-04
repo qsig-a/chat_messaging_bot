@@ -3954,8 +3954,9 @@ async def test_channels_without_a_topic_token_are_ignored():
     lister = make_lister([([ch("C1", "general chat"), ch("C2", "")], None)])
     index = ChannelIndex(lister)
 
-    await index.refresh()
-
+    # No explicit refresh() here: lookup()'s own on-demand refresh consumes the
+    # single page above. Calling refresh() first would exhaust it, and the miss
+    # below would then demand a second page the lister cannot serve.
     assert await index.lookup("+14165550123") is None
 
 
