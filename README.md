@@ -362,7 +362,8 @@ version in a trailing comment. Nothing updates them automatically.
   from `GET /media/{token}` when SignalWire fetches it. Anything over
   `MAX_MMS_BYTES` (1 MiB by default) is not sent, and the bridge replies saying
   so. Media rides on the first chunk of a split message only, to avoid paying
-  for the same MMS several times.
+  for the same MMS several times. Inbound media goes the other way — downloaded
+  and re-uploaded into the channel, up to 8 MB.
 - **Long messages** are split at 1500 characters into separate SMS. Anything
   outside the GSM-7 alphabet (emoji, curly quotes) drops the per-segment limit
   from 160 to 70 characters — segment counts are logged.
