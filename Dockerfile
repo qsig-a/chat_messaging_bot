@@ -23,7 +23,7 @@ RUN apt-get update \
 
 # Non-root user. /data is chowned to it below, and a named volume inherits
 # those permissions when Docker first initialises it.
-RUN useradd --system --uid 10001 --create-home --home-dir /home/app app
+RUN useradd --system --uid 10001 --home-dir /nonexistent --shell /usr/sbin/nologin app
 
 COPY --from=build /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH" \
@@ -38,7 +38,6 @@ COPY sms_bridge/ ./sms_bridge/
 
 # SQLite lives here; mounted as a named volume in compose.
 RUN mkdir -p /data && chown app:app /data
-VOLUME ["/data"]
 
 USER app
 EXPOSE 8080

@@ -1,0 +1,32 @@
+# The build only COPYs requirements.txt and sms_bridge/, so nothing here can
+# reach the image — this is about keeping the context small and keeping local
+# credentials and state out of the daemon's hands.
+
+# Tracked files the build doesn't need
+.git/
+.github/
+.claude/
+.env*
+docs/
+tests/
+*.md
+LICENSE
+pytest.ini
+requirements.in
+requirements-dev.in
+requirements-dev.txt
+docker-compose.yml
+stack.portainer.yml
+sms-bridge.service
+
+# Local artifacts. These are gitignored, so they never show up in `git status`
+# — but they are in the build context, and .venv/ and .worktrees/ are by far
+# the largest things in it.
+.venv/
+.worktrees/
+__pycache__/
+*.py[codz]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+bridge.sqlite3*
