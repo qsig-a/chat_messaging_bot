@@ -83,6 +83,10 @@ class DiscordAdapter:
 
     def __init__(self, config: Config) -> None:
         self._c = config
+        # Voice is never used; silence discord.py's one-time "voice will NOT be
+        # supported" warnings (PyNaCl and davey are deliberately not installed).
+        discord.VoiceClient.warn_nacl = False
+        discord.VoiceClient.warn_dave = False
         intents = discord.Intents.default()
         intents.message_content = True
         intents.guilds = True
