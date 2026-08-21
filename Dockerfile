@@ -16,6 +16,10 @@ RUN pip install --require-hashes -r requirements.txt
 # ---- runtime stage ----
 FROM python:3.12-slim AS runtime
 
+# The release pipeline passes the git tag (e.g. v1.2.3); a plain local build
+# gets "dev". Written to /app/VERSION below so the process can log it at startup.
+ARG VERSION=dev
+
 # curl is only here for the container HEALTHCHECK below; drop it if you don't want it.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
@@ -35,6 +39,9 @@ ENV PATH="/opt/venv/bin:$PATH" \
 
 WORKDIR /app
 COPY sms_bridge/ ./sms_bridge/
+
+# Record the deployed version next to the package; the app reads it at startup.
+RUN printf '%s\n' "$VERSION" > VERSION
 
 # SQLite lives here; mounted as a named volume in compose.
 RUN mkdir -p /data && chown app:app /data

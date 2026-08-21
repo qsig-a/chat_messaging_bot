@@ -16,6 +16,7 @@ from .media import MediaTokens
 from .server import create_app
 from .signalwire import SignalWire
 from .store import Store
+from .version import resolve_version
 
 logging.basicConfig(
     level=logging.INFO,
@@ -77,7 +78,7 @@ async def run(config: Config) -> None:
 
     tasks: list[asyncio.Task] = []
 
-    log.info("platform=%s", config.platform)
+    log.info("version=%s platform=%s", resolve_version(), config.platform)
     tasks.append(asyncio.create_task(server.serve()))
     log.info(
         "webhook listening on %s:%s (public: %s)",

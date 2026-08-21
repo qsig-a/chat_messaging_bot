@@ -105,6 +105,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Bake the tag into the image so the process can log its own version.
+          build-args: |
+            VERSION=${{ steps.v.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

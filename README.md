@@ -240,6 +240,10 @@ healthcheck built in (`docker compose ps` shows health status).
 sudo useradd -r -s /usr/sbin/nologin sms
 sudo mkdir -p /opt/sms-bridge && sudo chown sms:sms /opt/sms-bridge
 sudo -u sms cp -r sms_bridge requirements.txt /opt/sms-bridge/
+# Record which release this install is, so the bridge logs it at startup. From a
+# git checkout of the tag you deployed (run from that checkout):
+sudo -u sms sh -c 'git describe --tags --always > /opt/sms-bridge/VERSION'
+# ...or just write the tag by hand (e.g. v0.3.0). A dev checkout can skip this; it logs "dev".
 cd /opt/sms-bridge
 sudo -u sms python3 -m venv .venv
 sudo -u sms .venv/bin/pip install --require-hashes -r requirements.txt
